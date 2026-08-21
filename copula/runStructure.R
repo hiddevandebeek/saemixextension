@@ -25,11 +25,11 @@ ctl <- function(sd) list(seed = sd, save = FALSE, save.graphs = FALSE, print = F
 allStructures <- function() {
   out <- list()
   for (p in unique(lapply(combinat::permn(1:4), identity))) {
-    s <- try(rvinecopulib::dvine_structure(unlist(p), trunc_lvl = 1), silent = TRUE)
+    s <- try(rvinecopulib::dvine_structure(unlist(p)), silent = TRUE)
     if (!inherits(s, "try-error")) out[[length(out) + 1]] <- s
   }
   for (r in 1:4) {
-    s <- try(rvinecopulib::cvine_structure(c(r, setdiff(1:4, r)), trunc_lvl = 1), silent = TRUE)
+    s <- try(rvinecopulib::cvine_structure(c(r, setdiff(1:4, r))), silent = TRUE)
     if (!inherits(s, "try-error")) out[[length(out) + 1]] <- s
   }
   out
@@ -54,17 +54,19 @@ for (rr in seq_len(NREP)) {
   E <- cd@results@phi.samp[, idx, 1] - cd@results@mean.phi[, idx]
   uu <- pmin(pmax(pnorm(sweep(E, 2, sdS, "/")), 1e-6), 1 - 1e-6)
   ll <- vapply(STR, function(st) {
-    f <- try(rvinecopulib::vinecop(uu, structure = st, family_set = FAMSET), silent = TRUE)
+    f <- try(rvinecopulib::vinecop(uu, structure = st, family_set = FAMSET,
+                                   trunc_lvl = 1L), silent = TRUE)
     if (inherits(f, "try-error")) -Inf else f$loglik }, numeric(1))
   pick <- list(fixed = 1L, best = which.max(ll), worst = which.min(ll))
   for (a in names(pick)) {
-    st <- if (a == "fixed") rvinecopulib::dvine_structure(1:4, trunc_lvl = 1) else STR[[pick[[a]]]]
-    v0 <- rvinecopulib::vinecop_dist(list(lapply(1:3, function(e)
-            rvinecopulib::bicop_dist("gaussian", parameters = 0.3))), st)
+    st <- if (a == "fixed") rvinecopulib::dvine_structure(1:4) else STR[[pick[[a]]]]
+    v0 <- rvinecopulib::vinecop_dist(
+      lapply(1:3, function(t) lapply(seq_len(4 - t), function(e)
+        rvinecopulib::bicop_dist("gaussian", parameters = if (t == 1) 0.3 else 0))), st)
     copulaSet(v0, sdS, familySet = FAMSET, mode = "sa", refitEvery = 3L,
               fitFrom = 30L, truncLvl = 1L)
     fC <- try(saemix::saemix(mod, dat, ctl(rr)), silent = TRUE)
-    if (inherits(fC, "try-error")) { copulaClear(); next }
+    if (inherits(fC, "try-error")) { cat("  ", a, "FAILED:", as.character(fC)); copulaClear(); next }
     stt <- copulaGet(); copulaClear()
     res[[length(res) + 1]] <- list(rep = rr, arm = a,
       parErr = mean(abs(c(fC@results@fixed.effects, stt$sd) - truth) / truth),

@@ -35,7 +35,7 @@ copulaClear <- function() rm(list = ls(.cop), envir = .cop)
 copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
                       refitEvery = 1L, fitFrom = 1L, verbose = FALSE,
                       freezeSd = FALSE, freezeVine = FALSE,
-                      mode = c("pool", "sa"), sdFromSS = TRUE, truncLvl = Inf) {
+                      mode = c("pool", "sa", "joint"), sdFromSS = TRUE, truncLvl = Inf) {
   mode <- match.arg(mode)
   copulaClear()
   .cop$vine <- vine
@@ -50,6 +50,7 @@ copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
   .cop$freezeSd <- freezeSd
   .cop$freezeVine <- freezeVine
   .cop$mode <- mode
+  .cop$jointMaxit <- 40L
   .cop$sdFromSS <- sdFromSS
   .cop$truncLvl <- truncLvl
   .cop$famFixed <- NULL
@@ -152,10 +153,137 @@ etaVineFromFlat <- function(flat, d, structure) {
   rvinecopulib::vinecop_dist(pcs, structure)
 }
 
+
+## ---- joint (MLE) M-step helpers --------------------------------------------
+##
+## The IFM M-step solves M_j = 0 for sd_j (the Gaussian-marginal score) and
+## drops D_j, the copula's dependence on sd through u = pnorm(eta/sd).  E[D_j]
+## = 0 at the truth, so IFM is consistent -- but it solves an unbiased
+## ESTIMATING EQUATION, not the score, so the fixed point is not the MLE.
+## Consequences: no EM ascent guarantee, and standard errors / likelihood-ratio
+## tests from the observed information are invalid (they need the sandwich).
+##
+## mode = "joint" maximises Q over (sd, pair-copula taus) TOGETHER, restoring
+## MLE status for the copula model.  Families and structure stay frozen after
+## the first selection, so Q is a fixed function of a fixed-length parameter
+## vector -- which is also what Delyon's (M1)/(M5) require.
+
+copulaPadFlat <- function(vine, d) {
+  f <- unlist(vine$pair_copulas, recursive = FALSE)
+  nFull <- d * (d - 1) / 2
+  if (length(f) < nFull)
+    f <- c(f, rep(list(rvinecopulib::bicop_dist("indep")), nFull - length(f)))
+  f
+}
+
+## Admissible Kendall-tau range for a fixed family+rotation, unconstrained.
+## Archimedean families are one-sided: rotation 0/180 -> tau > 0, 90/270 -> < 0.
+copulaTauTwoSided <- function(fam) fam %in% c("gaussian", "frank", "t", "indep")
+copulaTauToX <- function(tau, fam, rot) {
+  if (copulaTauTwoSided(fam)) return(atanh(max(min(tau / 0.98, 0.999), -0.999)))
+  stats::qlogis(max(min(abs(tau) / 0.95, 0.999), 0.001))
+}
+copulaXToTau <- function(x, fam, rot) {
+  if (copulaTauTwoSided(fam)) return(0.98 * tanh(x))
+  (if (rot %in% c(90, 270)) -1 else 1) * 0.95 * stats::plogis(x)
+}
+
+copulaBicopFromTau <- function(tmpl, tau) {
+  if (tmpl$family == "indep") return(tmpl)
+  if (tmpl$family == "t")
+    return(rvinecopulib::bicop_dist("t", rotation = tmpl$rotation,
+             parameters = c(sin(pi * tau / 2), tmpl$parameters[2])))
+  rvinecopulib::bicop_dist(tmpl$family, rotation = tmpl$rotation,
+                           parameters = rvinecopulib::ktau_to_par(tmpl, tau))
+}
+
+copulaLogPrior <- function(E, vine, sdv) {
+  z <- sweep(E, 2, sdv, "/")
+  u <- pmin(pmax(pnorm(z), 1e-10), 1 - 1e-10)
+  rowSums(dnorm(z, log = TRUE)) - sum(log(sdv)) +
+    log(pmax(rvinecopulib::dvinecop(u, vine), 1e-300))
+}
+
+## Warm-started, limited-iteration joint maximisation.  An increase in Q is all
+## a generalised-EM step needs; iterating across SAEM iterations converges to
+## the maximiser (Delyon et al. 1999, Sec. 8.1).
+copulaMaximiseJoint <- function(E, w, sd0, vine0, d, maxit = 40L) {
+  flat <- copulaPadFlat(vine0, d)
+  fams <- vapply(flat, function(b) b$family, character(1))
+  rots <- vapply(flat, function(b) b$rotation, numeric(1))
+  free <- which(fams != "indep")
+  tau0 <- vapply(seq_along(flat), function(i)
+    if (fams[i] == "indep") 0 else rvinecopulib::par_to_ktau(flat[[i]]), numeric(1))
+  build <- function(tt) {
+    fl <- lapply(seq_along(flat), function(i) copulaBicopFromTau(flat[[i]], tt[i]))
+    k <- 1L; pcs <- vector("list", d - 1)
+    for (t in seq_len(d - 1)) {
+      ed <- vector("list", d - t)
+      for (e in seq_len(d - t)) { ed[[e]] <- fl[[k]]; k <- k + 1L }
+      pcs[[t]] <- ed
+    }
+    rvinecopulib::vinecop_dist(pcs, vine0$structure)
+  }
+  if (!length(free)) return(list(sd = sd0, vine = vine0, conv = NA_integer_))
+  par0 <- c(log(sd0), vapply(free, function(i)
+    copulaTauToX(tau0[i], fams[i], rots[i]), numeric(1)))
+  negQ <- function(pv) {
+    sdv <- exp(pv[seq_len(d)])
+    if (any(!is.finite(sdv)) || any(sdv < 1e-6) || any(sdv > 1e3)) return(1e10)
+    tt <- tau0
+    tt[free] <- vapply(seq_along(free), function(k)
+      copulaXToTau(pv[d + k], fams[free[k]], rots[free[k]]), numeric(1))
+    v <- try(build(tt), silent = TRUE)
+    if (inherits(v, "try-error")) return(1e10)
+    val <- -sum(w * copulaLogPrior(E, v, sdv))
+    if (!is.finite(val)) 1e10 else val
+  }
+  base <- negQ(par0)
+  op <- try(stats::optim(par0, negQ, method = "BFGS", control = list(maxit = maxit)),
+            silent = TRUE)
+  if (inherits(op, "try-error") || !is.finite(op$value) || op$value >= base)
+    return(list(sd = sd0, vine = vine0, conv = -1L))
+  tt <- tau0
+  tt[free] <- vapply(seq_along(free), function(k)
+    copulaXToTau(op$par[d + k], fams[free[k]], rots[free[k]]), numeric(1))
+  list(sd = exp(op$par[seq_len(d)]), vine = build(tt), conv = op$convergence)
+}
+
 copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma = 1) {
   if (is.null(.cop$curEta)) return(invisible(NULL))
   if (kiter < .cop$fitFrom) return(invisible(NULL))
   if (kiter %% .cop$refitEvery != 0L) return(invisible(NULL))
+  if (identical(.cop$mode, "joint")) {
+    if (is.null(.cop$poolEta)) return(invisible(NULL))
+    E <- .cop$poolEta; w <- .cop$poolW / sum(.cop$poolW)
+    if (is.null(.cop$famFixed) && !isTRUE(.cop$freezeVine)) {
+      u0 <- pmin(pmax(pnorm(sweep(E, 2, .cop$sd, "/")), 1e-6), 1 - 1e-6)
+      fs0 <- if (is.null(.cop$familySet)) "parametric" else .cop$familySet
+      f0 <- try(rvinecopulib::vinecop(u0, structure = .cop$vine$structure,
+                                      family_set = fs0, weights = w * length(w),
+                                      selcrit = "aic", trunc_lvl = .cop$truncLvl),
+                silent = TRUE)
+      if (!inherits(f0, "try-error")) {
+        .cop$vine <- f0
+        .cop$famFixed <- unique(vapply(unlist(f0$pair_copulas, recursive = FALSE),
+                                       function(b) b$family, character(1)))
+      }
+    }
+    jm <- copulaMaximiseJoint(E, w, .cop$sd, .cop$vine, .cop$d,
+            maxit = if (is.null(.cop$jointMaxit)) 40L else .cop$jointMaxit)
+    sdNew <- if (isTRUE(.cop$freezeSd)) .cop$sd else jm$sd
+    if (kiter <= nbiterSa && !is.null(.cop$sdPrev))
+      sdNew <- pmax(sdNew, .cop$sdPrev * sqrt(alpha1Sa))
+    .cop$sdPrev <- sdNew; .cop$sd <- sdNew
+    if (!isTRUE(.cop$freezeVine)) .cop$vine <- jm$vine
+    if (isTRUE(.cop$verbose))
+      .cop$trace[[length(.cop$trace) + 1L]] <- list(
+        kiter = kiter, sd = sdNew, npool = nrow(E), conv = jm$conv,
+        tau = vapply(copulaPadFlat(.cop$vine, .cop$d), function(b)
+          if (b$family == "indep") 0 else rvinecopulib::par_to_ktau(b), numeric(1)),
+        fam = vapply(copulaPadFlat(.cop$vine, .cop$d), function(b) b$family, character(1)))
+    return(invisible(NULL))
+  }
   if (identical(.cop$mode, "sa")) {
     E <- .cop$curEta
     w <- rep(1 / nrow(E), nrow(E))
@@ -237,11 +365,21 @@ copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma =
         .cop$vine <- etaVineFromFlat(blended, .cop$d, .cop$vine$structure)
       }
     } else {
+      ## Freeze families after the first selection, exactly as mode="sa" does.
+      ## Re-selecting families at every refit changes the objective between
+      ## iterations, so there is no fixed target for the algorithm to converge
+      ## to -- the SA recursion is then chasing a moving function.
+      fsUse <- if (is.null(.cop$famFixed)) fs else .cop$famFixed
       fit <- try(rvinecopulib::vinecop(u, structure = .cop$vine$structure,
-                                       family_set = fs, weights = w * length(w),
+                                       family_set = fsUse, weights = w * length(w),
                                        selcrit = "aic", trunc_lvl = .cop$truncLvl),
                  silent = TRUE)
-      if (!inherits(fit, "try-error")) .cop$vine <- fit
+      if (!inherits(fit, "try-error")) {
+        if (is.null(.cop$famFixed))
+          .cop$famFixed <- unique(vapply(unlist(fit$pair_copulas, recursive = FALSE),
+                                         function(b) b$family, character(1)))
+        .cop$vine <- fit
+      }
     }
   }
   if (isTRUE(.cop$verbose))

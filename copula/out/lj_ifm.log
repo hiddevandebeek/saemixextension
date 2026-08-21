@@ -1,0 +1,6 @@
+[ifm rep 1] fixed point = 2.2860,1.1199,-1.2452,-1.2930,0.4656 (iters 4)
+   mu1       grad=   +7.940 se=  0.118 |t|= 67.02  shift=+0.0082
+   mu2       grad=   -9.646 se=  0.293 |t|= 32.93  shift=-0.0093
+   logSd1    grad=   +1.714 se=  0.115 |t|= 14.97  shift=+0.0116
+   logSd2    grad=   -3.434 se=  0.134 |t|= 25.69  shift=-0.0253
+   atanhTau  grad=   -0.060 se=  0.037 |t|=  1.63  shift=-0.0005

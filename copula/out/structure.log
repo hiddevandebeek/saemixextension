@@ -1,2 +1,9 @@
 candidate 1-truncated structures: 28 
 
+Error: object does not inherit from class vinecop_dist or object does not inherit from class vine_dist
+In addition: Warning messages:
+1: In sqrt(varik) : NaNs produced
+2: In sqrt(varik) : NaNs produced
+3: In sqrt(varik) : NaNs produced
+4: In sqrt(varik) : NaNs produced
+Execution halted
