@@ -1,0 +1,25 @@
+[rep 1] IFM p = 2.2947,1.1099,-1.2713,-1.2329,0.3763  (iters 4)
+   mu1       grad=  +16.702  se=  0.130  |t|=128.36  Hjj=   -1924.3  implied shift=+0.0087
+   mu2       grad=  -17.976  se=  0.241  |t|=74.65  Hjj=   -1723.4  implied shift=-0.0104
+   logSd1    grad=  +10.466  se=  0.033  |t|=315.32  Hjj=    -286.4  implied shift=+0.0365
+   logSd2    grad=  -12.470  se=  0.038  |t|=328.36  Hjj=    -239.7  implied shift=-0.0520
+   atanhTau  grad=   -0.034  se=  0.040  |t|= 0.87  Hjj=    -286.0  implied shift=-0.0001
+[rep 2] IFM p = 2.3036,1.0760,-1.3617,-1.2229,0.3296  (iters 4)
+   mu1       grad=  +19.052  se=  0.255  |t|=74.70  Hjj=   -2091.3  implied shift=+0.0091
+   mu2       grad=  -16.685  se=  0.324  |t|=51.54  Hjj=   -1604.1  implied shift=-0.0104
+   logSd1    grad=  +10.221  se=  0.042  |t|=241.57  Hjj=    -259.8  implied shift=+0.0393
+   logSd2    grad=   -8.794  se=  0.067  |t|=131.78  Hjj=    -224.3  implied shift=-0.0392
+   atanhTau  grad=   -0.039  se=  0.067  |t|= 0.58  Hjj=    -282.6  implied shift=-0.0001
+[rep 3] IFM p = 2.3261,1.1322,-1.0821,-1.1175,0.5096  (iters 4)
+   mu1       grad=   +7.881  se=  0.169  |t|=46.72  Hjj=   -1807.3  implied shift=+0.0044
+   mu2       grad=   -7.498  se=  0.156  |t|=48.08  Hjj=   -1926.7  implied shift=-0.0039
+   logSd1    grad=   -4.552  se=  0.039  |t|=117.26  Hjj=    -371.0  implied shift=-0.0123
+   logSd2    grad=   -0.266  se=  0.091  |t|= 2.91  Hjj=    -390.4  implied shift=-0.0007
+   atanhTau  grad=   +0.002  se=  0.093  |t|= 0.02  Hjj=    -303.5  implied shift=+0.0000
+[rep 4] IFM p = 2.2854,1.1094,-1.2623,-1.2700,0.4099  (iters 4)
+   mu1       grad=   -2.889  se=  0.268  |t|=10.78  Hjj=   -1970.6  implied shift=-0.0015
+   mu2       grad=   +3.679  se=  0.342  |t|=10.76  Hjj=   -2041.7  implied shift=+0.0018
+   logSd1    grad=   -2.639  se=  0.059  |t|=44.42  Hjj=    -257.1  implied shift=-0.0103
+   logSd2    grad=   +5.300  se=  0.117  |t|=45.40  Hjj=    -290.4  implied shift=+0.0182
+   atanhTau  grad=   -0.186  se=  0.086  |t|= 2.16  Hjj=    -314.1  implied shift=-0.0006
+saved out/llcheck_grad.rds

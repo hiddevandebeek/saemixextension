@@ -1,0 +1,3 @@
+truth: mu=10,3 sd=0.3 tau=0.3707 family=gumbel rot=0
+[rep 1] at TRUTH  dropped D=+0.153,-0.187   moment-part=-0.385,-0.172
+[rep 1] IFM converged in 4 iters, delta=1.94e-05

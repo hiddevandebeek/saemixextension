@@ -1,0 +1,18 @@
+TRUTH: allHigh=0.0164 allLow=0.0025 pairHigh=0.5009
+
+rep 1 done
+rep 2 done
+rep 3 done
+rep 4 done
+rep 5 done
+rep 6 done
+
+arm        parErr         allHigh (true .0114)          allLow (true .0017)          pairHigh (true .49)
+stock      0.0439        0.0056 (err -0.0108)        0.0057 (err +0.0032)        0.3483 (err -0.1526)
+full       0.0461        0.0142 (err -0.0022)        0.0030 (err +0.0006)        0.4520 (err -0.0489)
+t1         0.0424        0.0100 (err -0.0064)        0.0043 (err +0.0019)        0.4364 (err -0.0645)
+
+per-replicate |pairHigh error|:
+  stock  0.110 0.194 0.097 0.136 0.188 0.191  mean=0.1526
+  full   0.025 0.029 0.082 0.004 0.013 0.198  mean=0.0587
+  t1     0.043 0.017 0.087 0.029 0.161 0.194  mean=0.0884
