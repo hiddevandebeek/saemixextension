@@ -14,7 +14,7 @@ NREP <- 5; vnG <- etaVineGaussian(PK_R); truth <- c(PK_TRUE, PK_SD)
 ctl <- function(sd) list(seed = sd, save = FALSE, save.graphs = FALSE, print = FALSE,
                          displayProgress = FALSE, nbiter.saemix = c(150, 120),
                          nbiter.mcmc = c(2, 2, 2, 0), warnings = FALSE)
-arms <- list(stock = NULL, full = NA, t1 = 1L, frozen = -1L)
+arms <- list(stock = NULL, full = Inf, t1 = 1L, frozen = -1L)
 res <- list()
 for (rr in seq_len(NREP)) {
   set.seed(70 + rr); sD <- simPK(120, vnG); dat <- pkSaemixData(sD$data)
@@ -23,7 +23,7 @@ for (rr in seq_len(NREP)) {
     if (a != "stock") {
       tl <- arms[[a]]
       copulaSet(vnG, PK_SD, familySet = "gaussian", mode = "sa",
-                truncLvl = if (identical(tl, -1L)) NA else tl,
+                truncLvl = if (identical(tl, -1L)) Inf else tl,
                 freezeVine = identical(tl, -1L))
     }
     f <- try(saemix::saemix(pkSaemixModel(), dat, ctl(rr)), silent = TRUE)

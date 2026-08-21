@@ -35,7 +35,7 @@ copulaClear <- function() rm(list = ls(.cop), envir = .cop)
 copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
                       refitEvery = 1L, fitFrom = 1L, verbose = FALSE,
                       freezeSd = FALSE, freezeVine = FALSE,
-                      mode = c("pool", "sa"), sdFromSS = TRUE, truncLvl = NA) {
+                      mode = c("pool", "sa"), sdFromSS = TRUE, truncLvl = Inf) {
   mode <- match.arg(mode)
   copulaClear()
   .cop$vine <- vine
@@ -212,8 +212,18 @@ copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma =
         if (is.null(.cop$famFixed))
           .cop$famFixed <- unique(vapply(unlist(fit$pair_copulas, recursive = FALSE),
                                          function(b) b$family, character(1)))
-        old <- unlist(.cop$vine$pair_copulas, recursive = FALSE)
-        new <- unlist(fit$pair_copulas, recursive = FALSE)
+        ## A truncated fit returns fewer trees than the full vine; pad the
+        ## missing higher trees with independence so the flat edge list keeps
+        ## its canonical length and order.
+        padFlat <- function(v) {
+          f <- unlist(v$pair_copulas, recursive = FALSE)
+          nFull <- .cop$d * (.cop$d - 1) / 2
+          if (length(f) < nFull)
+            f <- c(f, rep(list(rvinecopulib::bicop_dist("indep")), nFull - length(f)))
+          f
+        }
+        old <- padFlat(.cop$vine)
+        new <- padFlat(fit)
         blended <- lapply(seq_along(new), function(i) {
           tOld <- if (old[[i]]$family == "indep") 0 else rvinecopulib::par_to_ktau(old[[i]])
           tNew <- if (new[[i]]$family == "indep") 0 else rvinecopulib::par_to_ktau(new[[i]])
