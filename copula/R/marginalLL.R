@@ -34,8 +34,14 @@ llObsPK <- function(eta, y, dose, tim, mu, propErr)
   llObsPKmat(matrix(eta, nrow = 1), y, dose, tim, mu, propErr)
 
 ## dPrior(eta) must accept a matrix of etas (rows) and return log densities.
+## DEFENSIVE MIXTURE.  A Laplace-t proposal alone gives heavy-tailed weights
+## under a copula prior with tail dependence -- measured ESS 77/2000 on the first
+## replicate, against 1273 for the Gaussian model.  Mixing a fraction `defensive`
+## of draws FROM THE PRIOR bounds the weight ratio by likelihood/defensive, which
+## is exactly the failure mode a tail-dependent prior creates.  rPrior must draw
+## from the same law dPrior evaluates.
 marginalLL <- function(dat, mu, dPrior, propErr, M = 3000, tdf = 5,
-                       inflate = 1.3, seed = 1) {
+                       inflate = 1.3, seed = 1, rPrior = NULL, defensive = 0.25) {
   set.seed(seed)
   ids <- unique(dat$id); d <- length(mu)
   ll <- ess <- numeric(length(ids))
@@ -52,9 +58,15 @@ marginalLL <- function(dat, mu, dPrior, propErr, M = 3000, tdf = 5,
     }
     if (is.null(S)) S <- diag(0.1, d)
     S <- S * inflate
-    E <- mvtnorm::rmvt(M, sigma = S, df = tdf, delta = op$par, type = "shifted")
-    lq <- mvtnorm::dmvt(E, delta = op$par, sigma = S, df = tdf, log = TRUE)
-    lp <- llObsPKmat(E, di$y, di$dose, di$time, mu, propErr) + dPrior(E)
+    useMix <- !is.null(rPrior) && defensive > 0
+    nD <- if (useMix) max(1L, round(M * defensive)) else 0L
+    E <- rbind(mvtnorm::rmvt(M - nD, sigma = S, df = tdf, delta = op$par, type = "shifted"),
+               if (nD > 0) rPrior(nD) else NULL)
+    lqT <- mvtnorm::dmvt(E, delta = op$par, sigma = S, df = tdf, log = TRUE)
+    lq <- if (useMix)
+      log((1 - defensive) * exp(lqT) + defensive * exp(dPrior(E))) else lqT
+    lpri <- dPrior(E)
+    lp <- llObsPKmat(E, di$y, di$dose, di$time, mu, propErr) + lpri
     lw <- lp - lq
     mx <- max(lw)
     w  <- exp(lw - mx)
@@ -64,6 +76,9 @@ marginalLL <- function(dat, mu, dPrior, propErr, M = 3000, tdf = 5,
   list(ll = sum(ll), perSubject = ll, ess = ess, essMin = min(ess), essMean = mean(ess))
 }
 
-## Convenience priors on the eta scale.
+## Convenience priors on the eta scale, each paired with its sampler so the
+## defensive mixture can draw from exactly the law it evaluates.
 priorMVN  <- function(Omega) function(E) mvtnorm::dmvnorm(E, sigma = Omega, log = TRUE)
+rpriorMVN <- function(Omega) function(n) mvtnorm::rmvnorm(n, sigma = Omega)
 priorVine <- function(vine, sd) function(E) dEtaVine(E, vine, sd, log = TRUE)
+rpriorVine<- function(vine, sd) function(n) rEtaVine(n, vine, sd)

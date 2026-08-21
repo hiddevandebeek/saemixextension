@@ -48,8 +48,10 @@ for (arm in c("gauss", "alt")) for (rep in seq_len(NREP)) {
   st <- copulaGet(); vnC <- st$vine; sdC <- st$sd
   muC <- log(fC@results@fixed.effects); peC <- fC@results@respar[2]
   copulaClear()
-  llG <- marginalLL(s$data, muG, priorMVN(OmG), peG, M = 2000, seed = 900 + rep)
-  llC <- marginalLL(s$data, muC, priorVine(vnC, sdC), peC, M = 2000, seed = 900 + rep)
+  llG <- marginalLL(s$data, muG, priorMVN(OmG), peG, M = 3000, seed = 900 + rep,
+                    rPrior = rpriorMVN(OmG))
+  llC <- marginalLL(s$data, muC, priorVine(vnC, sdC), peC, M = 3000, seed = 900 + rep,
+                    rPrior = rpriorVine(vnC, sdC))
   fl <- unlist(vnC$pair_copulas, recursive = FALSE)
   cT <- corners(tw[[arm]]); cG <- corners(vnGhat); cC <- corners(vnC)
   out[[length(out) + 1]] <- data.frame(rep = rep, arm = arm, N = N, mode = MODE,
