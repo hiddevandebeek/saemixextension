@@ -1,5 +1,7 @@
 # R-vine copulas as the random-effect distribution in SAEM
 
+> **Continuing this work? Read [HANDOFF.md](HANDOFF.md) first.**
+
 Research fork of saemix (branch `copula-eta`). Stock saemix behaviour is
 unchanged unless `copulaSet()` has been called.
 
