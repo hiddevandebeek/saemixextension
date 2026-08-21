@@ -35,7 +35,7 @@ copulaClear <- function() rm(list = ls(.cop), envir = .cop)
 copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
                       refitEvery = 1L, fitFrom = 1L, verbose = FALSE,
                       freezeSd = FALSE, freezeVine = FALSE,
-                      mode = c("pool", "sa"), sdFromSS = TRUE) {
+                      mode = c("pool", "sa"), sdFromSS = TRUE, truncLvl = NA) {
   mode <- match.arg(mode)
   copulaClear()
   .cop$vine <- vine
@@ -51,6 +51,7 @@ copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
   .cop$freezeVine <- freezeVine
   .cop$mode <- mode
   .cop$sdFromSS <- sdFromSS
+  .cop$truncLvl <- truncLvl
   .cop$famFixed <- NULL
   .cop$poolEta <- NULL
   .cop$poolW <- NULL
@@ -205,8 +206,8 @@ copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma =
       uc <- pmin(pmax(uc, 1e-6), 1 - 1e-6)
       fsUse <- if (is.null(.cop$famFixed)) fs else .cop$famFixed
       fit <- try(rvinecopulib::vinecop(uc, structure = .cop$vine$structure,
-                                       family_set = fsUse, selcrit = "aic"),
-                 silent = TRUE)
+                                       family_set = fsUse, selcrit = "aic",
+                                       trunc_lvl = .cop$truncLvl), silent = TRUE)
       if (!inherits(fit, "try-error")) {
         if (is.null(.cop$famFixed))
           .cop$famFixed <- unique(vapply(unlist(fit$pair_copulas, recursive = FALSE),
@@ -228,7 +229,8 @@ copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma =
     } else {
       fit <- try(rvinecopulib::vinecop(u, structure = .cop$vine$structure,
                                        family_set = fs, weights = w * length(w),
-                                       selcrit = "aic"), silent = TRUE)
+                                       selcrit = "aic", trunc_lvl = .cop$truncLvl),
+                 silent = TRUE)
       if (!inherits(fit, "try-error")) .cop$vine <- fit
     }
   }
