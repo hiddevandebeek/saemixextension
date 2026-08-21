@@ -33,7 +33,7 @@ for (nm in names(MODELS)) {
     tauTrue <- tauOf(vTrue)
     for (rr in seq_len(NREP)) {
       set.seed(1000 * which(names(MODELS) == nm) + 100 * (arm == "alt") + rr)
-      s <- simModel(m, N, vTrue)
+      s <- simModel(m, N, vTrue, propErr = if (is.null(m$propErr)) 0.10 else m$propErr)
       dat <- saemixDataFor(s$data); mod <- saemixModelFor(m)
       copulaClear()
       fS <- try(saemix::saemix(mod, dat, ctl(rr)), silent = TRUE)

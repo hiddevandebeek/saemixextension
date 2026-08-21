@@ -47,6 +47,15 @@ MODELS <- list(
     })
 )
 
+## The decisive cell: SAME d=4 structural model, but a design that actually
+## identifies Q and V2 -- dense early sampling for the distribution phase, long
+## follow-up for the terminal phase, and a tighter residual error.  Comparing
+## iv2 with iv2rich holds DIMENSION fixed and varies IDENTIFIABILITY, which is
+## the confound the rest of the ladder cannot break on its own.
+MODELS$iv2rich <- MODELS$iv2
+MODELS$iv2rich$times <- c(0.083, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 18, 24, 36)
+MODELS$iv2rich$propErr <- 0.05
+
 ## Same eta SD for every parameter, and an AR(1)-style correlation, so the
 ## dependence structure is comparable across d.
 ETA_SD  <- 0.30
