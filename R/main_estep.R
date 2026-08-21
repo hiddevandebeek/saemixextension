@@ -12,6 +12,17 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	omega.eta<-omega.eta-mydiag(mydiag(varList$omega[varList$ind.eta,varList$ind.eta]))+mydiag(domega)
 	chol.omega<-try(chol(omega.eta))
 	somega<-solve(omega.eta)
+
+	## Copula prior (research extension).  Inactive unless copulaSet() was
+	## called, in which case the Gaussian quadratic form -log N(0,omega) is
+	## swapped for -log p_vine(eta) everywhere the kernels use the prior.
+	## Kernel 1 additionally proposes FROM the prior, so it generalises for free:
+	## the prior cancels in the MH ratio whatever the prior is.
+	useCop <- copulaActive()
+	if (useCop && ncol(as.matrix(etaSlot <- matrix(0, 1, nb.etas))) != copulaGet()$d)
+		stop("copula prior: dim ", copulaGet()$d, " but ", nb.etas, " etas with IIV")
+	Ueta <- if (useCop) function(e) copulaUeta(e) else
+		function(e) 0.5*rowSums(e*(e%*%somega))
 	
 	# "/" dans Matlab = division matricielle, selon la doc "roughly" B*INV(A) (et *= produit matriciel...)
 	
@@ -24,7 +35,8 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	etaM<-phiM[,varList$ind.eta]-mean.phiM[,varList$ind.eta,drop=FALSE]
 	phiMc<-phiM
 	for(u in 1:opt$nbiter.mcmc[1]) { # 1er noyau
-		etaMc<-matrix(rnorm(Dargs$NM*nb.etas),ncol=nb.etas)%*%chol.omega
+		etaMc<-if(useCop) copulaRandEta(Dargs$NM) else
+			matrix(rnorm(Dargs$NM*nb.etas),ncol=nb.etas)%*%chol.omega
 		phiMc[,varList$ind.eta]<-mean.phiM[,varList$ind.eta]+etaMc
 		Uc.y<-compute.LLy(phiMc,Uargs,Dargs,DYF,varList$pres)
 		deltau<-Uc.y-U.y
@@ -32,7 +44,7 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 		etaM[ind,]<-etaMc[ind,]
 		U.y[ind]<-Uc.y[ind]
 	}
-	U.eta<-0.5*rowSums(etaM*(etaM%*%somega))
+	U.eta<-Ueta(etaM)
 	
 	# Second stage
 	
@@ -46,7 +58,7 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 				etaMc[,vk2]<-etaM[,vk2]+matrix(rnorm(Dargs$NM*nrs2), ncol=nrs2)%*%mydiag(varList$domega2[vk2,nrs2],nrow=1) # 2e noyau ? ou 1er noyau+permutation?
 				phiMc[,varList$ind.eta]<-mean.phiM[,varList$ind.eta]+etaMc
 				Uc.y<-compute.LLy(phiMc,Uargs,Dargs,DYF,varList$pres)
-				Uc.eta<-0.5*rowSums(etaMc*(etaMc%*%somega))
+				Uc.eta<-Ueta(etaMc)
 				deltu<-Uc.y-U.y+Uc.eta-U.eta
 				ind<-which(deltu<(-1)*log(runif(Dargs$NM)))
 				etaM[ind,]<-etaMc[ind,]
@@ -78,7 +90,7 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 				etaMc[,vk2]<-etaM[,vk2]+matrix(rnorm(Dargs$NM*nrs2), ncol=nrs2)%*%mydiag(varList$domega2[vk2,nrs2])
 				phiMc[,varList$ind.eta]<-mean.phiM[,varList$ind.eta]+etaMc
 				Uc.y<-compute.LLy(phiMc,Uargs,Dargs,DYF,varList$pres)
-				Uc.eta<-0.5*rowSums(etaMc*(etaMc%*%somega))
+				Uc.eta<-Ueta(etaMc)
 				deltu<-Uc.y-U.y+Uc.eta-U.eta
 				ind<-which(deltu<(-log(runif(Dargs$NM))))
 				etaM[ind,]<-etaMc[ind,]
@@ -96,6 +108,8 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	}
 
 
+	if(useCop && opt$nbiter.mcmc[4]>0 && kiter<opt$nbiter.map)
+		stop("copula prior: MAP kernel (nbiter.mcmc[4]) needs the copula Hessian; set nbiter.mcmc[4]=0")
 	if(opt$nbiter.mcmc[4]>0 & kiter<opt$nbiter.map) {
 		etaMc<-etaM
 		propc <- U.eta
@@ -232,7 +246,7 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 
 		etaM <- eta_map
 	  	phiM<-etaM+mean.phiM
-	  	U.eta<-0.5*rowSums(etaM*(etaM%*%somega))
+	  	U.eta<-Ueta(etaM)
 	  	U.y<-compute.LLy(phiM,Uargs,Dargs,DYF,varList$pres)
 
 	  	for (u in 1:opt$nbiter.mcmc[4]) {

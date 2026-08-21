@@ -18,7 +18,7 @@ Description: The 'saemix' package implements the Stochastic Approximation EM alg
 License: GPL (>= 2)
 LazyLoad: yes
 LazyData: yes
-Imports: graphics, stats, methods, gridExtra, ggplot2, grid, rlang, mclust, scales, MASS
+Imports: graphics, stats, methods, gridExtra, ggplot2, grid, rlang, mclust, scales, MASS, rvinecopulib
 Suggests: testthat, survival
 Depends: npde (>= 3.2)
 Encoding: UTF-8
@@ -52,5 +52,6 @@ Collate:
     'main_estep.R'
     'main_initialiseMainAlgo.R'
     'main_mstep.R'
+    'copulaPrior.R'
     'stepwise.R'
     'zzz.R'

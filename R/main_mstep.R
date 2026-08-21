@@ -76,9 +76,27 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 	mean.phi<-Uargs$COV %*% varList$MCOV
 	e1.phi<-mean.phi[,varList$ind.eta,drop=FALSE]
 
+	## Copula prior (research extension): carry Q-hat as a WEIGHTED PARTICLE
+	## POOL instead of a finite sufficient statistic -- Delyon et al. (1999)
+	## eq. (6) with Q-hat a weighted empirical measure, because (M1) fails once
+	## any pair copula is non-Gaussian.  The M-step is IFM, not the exact joint
+	## maximiser.  varList$omega is then only a Gaussian surrogate, used for the
+	## betas GLS block and the random-walk step scaling.
+	if(copulaActive()) {
+		mean.phiM<-do.call(rbind,rep(list(mean.phi),Uargs$nchains))
+		etaPool<-phiM[,varList$ind.eta,drop=FALSE]-mean.phiM[,varList$ind.eta,drop=FALSE]
+		copulaPoolUpdate(etaPool, opt$stepsize[kiter], Uargs$nchains)
+		copulaMstep(kiter)
+		copulaDiag(kiter, betas, colMeans(etaPool), varList$pres, opt$stepsize[kiter])
+	}
+
 	# Covariance of the random effects
 	omega.full<-matrix(data=0,nrow=Uargs$nb.parameters,ncol=Uargs$nb.parameters)
+	if(copulaActive()) {
+		omega.full[varList$ind.eta,varList$ind.eta]<-copulaOmega()
+	} else {
 	omega.full[varList$ind.eta,varList$ind.eta]<-suffStat$statphi2/Dargs$N + t(e1.phi)%*%e1.phi/Dargs$N - t(suffStat$statphi1)%*%e1.phi/Dargs$N - t(e1.phi)%*%suffStat$statphi1/Dargs$N
+	}
 	varList$omega[Uargs$indest.omega]<-omega.full[Uargs$indest.omega]
 
 	# Simulated annealing (applied to the diagonal elements of omega)
@@ -133,5 +151,7 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		    }
 		  }
 	}
+	if(isTRUE(getOption("saemixTrace",FALSE)))
+		.saemixTracePush(kiter, betas, mydiag(varList$omega), varList$pres, opt$stepsize[kiter], suffStat$statrese)
 	return(list(varList=varList,mean.phi=mean.phi,phi=phi,betas=betas,suffStat=suffStat))
 }
