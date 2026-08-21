@@ -30,6 +30,19 @@ for (hh in unique(r$how)) for (lv in c("Oracle", "Draws", "Ebe")) {
   cat(sprintf("%-7s %-8s  %.3f\n", hh, lv, mean(a > 12.59)))
 }
 
+## NOTE ON THE REFERENCE DISTRIBUTION.  There is no standard one: swapping a
+## Gaussian pair copula for Gumbel/Clayton/Frank/Joe changes the FAMILY at equal
+## parameter count (0 df), while t adds 1, so the compared models are largely
+## non-nested and the "obvious" chi-square(6) has ill-defined df.  That
+## ill-definedness IS the finding; the number above shows what taking the obvious
+## reference at face value would cost.  The cleanest statement is the next block:
+## under a GAUSSIAN truth, how often does AIC select a non-Gaussian pair copula?
+cat("\n-- P(AIC selects >=1 non-Gaussian pair copula) --\n")
+for (hh in unique(r$how)) for (lv in c("Oracle", "Draws", "Ebe"))
+  cat(sprintf("%-7s %-8s  gauss-truth=%.3f   vine-truth=%.3f\n", hh, lv,
+      mean(r[[paste0("ng", lv)]][r$how == hh & r$arm == "gauss"] > 0),
+      mean(r[[paste0("ng", lv)]][r$how == hh & r$arm == "alt"] > 0)))
+
 cat("\n-- non-Gaussian pair copulas selected (out of 6) --\n")
 for (hh in unique(r$how)) for (lv in c("Oracle", "Draws", "Ebe"))
   cat(sprintf("%-7s %-8s gauss-truth=%.2f  vine-truth=%.2f\n", hh, lv,

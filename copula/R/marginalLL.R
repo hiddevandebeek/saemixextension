@@ -12,14 +12,26 @@
 suppressMessages({library(mvtnorm); library(numDeriv)})
 source("R/etaCopula.R")
 
-## log p(y_i | eta) for the 2-cmt proportional-error model.
-llObsPK <- function(eta, y, dose, tim, mu, propErr) {
-  psi <- exp(mu + eta)
-  f <- model2cmt(matrix(psi, nrow = 1), rep(1, length(y)), cbind(dose, tim))
-  if (any(!is.finite(f)) || any(f <= 0)) return(-1e10)
+## log p(y_i | eta) for the 2-cmt proportional-error model, VECTORISED over
+## draws: E is M x d, returns a length-M vector.  One model call for all M
+## draws instead of M calls -- the IS loop is otherwise dominated by R overhead.
+llObsPKmat <- function(E, y, dose, tim, mu, propErr) {
+  E <- as.matrix(E); M <- nrow(E); nt <- length(y)
+  psi <- exp(sweep(E, 2, mu, "+"))
+  f <- model2cmt(psi, rep(seq_len(M), each = nt),
+                 cbind(rep(dose, length.out = M * nt), rep(tim, times = M)))
+  f <- matrix(f, nrow = nt, ncol = M)
+  bad <- !is.finite(f) | f <= 0
+  f[bad] <- 1e-12
   g <- propErr * f
-  sum(dnorm(y, f, g, log = TRUE))
+  ll <- colSums(dnorm(rep(y, times = M), as.vector(f), as.vector(g), log = TRUE) |>
+                matrix(nrow = nt))
+  ll[apply(bad, 2, any)] <- -1e10
+  ll
 }
+
+llObsPK <- function(eta, y, dose, tim, mu, propErr)
+  llObsPKmat(matrix(eta, nrow = 1), y, dose, tim, mu, propErr)
 
 ## dPrior(eta) must accept a matrix of etas (rows) and return log densities.
 marginalLL <- function(dat, mu, dPrior, propErr, M = 3000, tdf = 5,
@@ -42,8 +54,7 @@ marginalLL <- function(dat, mu, dPrior, propErr, M = 3000, tdf = 5,
     S <- S * inflate
     E <- mvtnorm::rmvt(M, sigma = S, df = tdf, delta = op$par, type = "shifted")
     lq <- mvtnorm::dmvt(E, delta = op$par, sigma = S, df = tdf, log = TRUE)
-    lp <- apply(E, 1, function(e) llObsPK(e, di$y, di$dose, di$time, mu, propErr)) +
-          dPrior(E)
+    lp <- llObsPKmat(E, di$y, di$dose, di$time, mu, propErr) + dPrior(E)
     lw <- lp - lq
     mx <- max(lw)
     w  <- exp(lw - mx)

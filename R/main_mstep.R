@@ -86,7 +86,9 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		mean.phiM<-do.call(rbind,rep(list(mean.phi),Uargs$nchains))
 		etaPool<-phiM[,varList$ind.eta,drop=FALSE]-mean.phiM[,varList$ind.eta,drop=FALSE]
 		copulaPoolUpdate(etaPool, opt$stepsize[kiter], Uargs$nchains)
-		copulaMstep(kiter)
+		omSS<-suffStat$statphi2/Dargs$N + t(e1.phi)%*%e1.phi/Dargs$N - t(suffStat$statphi1)%*%e1.phi/Dargs$N - t(e1.phi)%*%suffStat$statphi1/Dargs$N
+		copulaMstep(kiter, opt$nbiter.sa, opt$alpha1.sa,
+		            sdSS=sqrt(pmax(mydiag(omSS), .Machine$double.eps)), gamma=opt$stepsize[kiter])
 		copulaDiag(kiter, betas, colMeans(etaPool), varList$pres, opt$stepsize[kiter])
 	}
 
