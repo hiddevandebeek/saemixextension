@@ -1,0 +1,19 @@
+[joint rep 1] fixed point = 2.2876,1.1131,-1.2543,-1.3177,0.4574 (iters 4)
+   mu1       grad=   -0.023 se=  0.132 |t|=  0.17  shift=-0.0000
+   mu2       grad=   +0.071 se=  0.222 |t|=  0.32  shift=+0.0001
+   logSd1    grad=   -0.068 se=  0.084 |t|=  0.81  shift=-0.0005
+   logSd2    grad=   +0.182 se=  0.124 |t|=  1.47  shift=+0.0012
+   atanhTau  grad=   -0.096 se=  0.052 |t|=  1.85  shift=-0.0008
+[joint rep 2] fixed point = 2.3229,1.0993,-1.4213,-1.4145,0.1883 (iters 4)
+   mu1       grad=   -0.564 se=  0.066 |t|=  8.61  shift=-0.0007
+   mu2       grad=   +0.297 se=  0.089 |t|=  3.34  shift=+0.0004
+   logSd1    grad=   +0.132 se=  0.055 |t|=  2.40  shift=+0.0016
+   logSd2    grad=   -0.021 se=  0.053 |t|=  0.40  shift=-0.0002
+   atanhTau  grad=   +0.097 se=  0.067 |t|=  1.43  shift=+0.0009
+
+== joint, N=40: mean |t| and mean |shift| over 2 reps ==
+   mu1       mean|t|=   4.39  mean|shift|=0.0004  signs=--
+   mu2       mean|t|=   1.83  mean|shift|=0.0002  signs=++
+   logSd1    mean|t|=   1.61  mean|shift|=0.0010  signs=-+
+   logSd2    mean|t|=   0.93  mean|shift|=0.0007  signs=+-
+   atanhTau  mean|t|=   1.64  mean|shift|=0.0008  signs=-+

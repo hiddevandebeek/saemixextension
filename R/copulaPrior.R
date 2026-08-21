@@ -62,6 +62,14 @@ copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
 }
 
 copulaActive <- function() !is.null(.cop$vine)
+
+## Location shift the joint M-step wants applied to mean.phi (zero unless
+## mode="joint").  Consumed and cleared by mstep.
+copulaTakeDelta <- function() {
+  dl <- .cop$delta
+  .cop$delta <- NULL
+  if (is.null(dl)) NULL else dl
+}
 copulaGet <- function() as.list(.cop)
 
 ## -log p(eta) up to an additive constant, matching saemix's U.eta convention.
@@ -207,7 +215,13 @@ copulaLogPrior <- function(E, vine, sdv) {
 ## Warm-started, limited-iteration joint maximisation.  An increase in Q is all
 ## a generalised-EM step needs; iterating across SAEM iterations converges to
 ## the maximiser (Delyon et al. 1999, Sec. 8.1).
-copulaMaximiseJoint <- function(E, w, sd0, vine0, d, maxit = 40L) {
+## `withMu = TRUE` adds a location block.  The draws E are etas relative to the
+## CURRENT mean.phi, so moving it to mean.phi + delta relabels the same phi as
+## eta = E - delta: the observation term is invariant and delta can be optimised
+## on the same weighted draws.  Without this block mu still solves E[eta] = 0,
+## another unbiased estimating equation rather than the score, and the fixed
+## point is not the MLE.
+copulaMaximiseJoint <- function(E, w, sd0, vine0, d, maxit = 40L, withMu = TRUE) {
   flat <- copulaPadFlat(vine0, d)
   fams <- vapply(flat, function(b) b$family, character(1))
   rots <- vapply(flat, function(b) b$rotation, numeric(1))
@@ -224,29 +238,34 @@ copulaMaximiseJoint <- function(E, w, sd0, vine0, d, maxit = 40L) {
     }
     rvinecopulib::vinecop_dist(pcs, vine0$structure)
   }
-  if (!length(free)) return(list(sd = sd0, vine = vine0, conv = NA_integer_))
-  par0 <- c(log(sd0), vapply(free, function(i)
+  if (!length(free)) return(list(sd = sd0, vine = vine0, delta = rep(0, d), conv = NA_integer_))
+  nMu <- if (isTRUE(withMu)) d else 0L
+  par0 <- c(rep(0, nMu), log(sd0), vapply(free, function(i)
     copulaTauToX(tau0[i], fams[i], rots[i]), numeric(1)))
   negQ <- function(pv) {
-    sdv <- exp(pv[seq_len(d)])
-    if (any(!is.finite(sdv)) || any(sdv < 1e-6) || any(sdv > 1e3)) return(1e10)
+    delta <- if (nMu) pv[seq_len(nMu)] else rep(0, d)
+    sdv <- exp(pv[nMu + seq_len(d)])
+    if (any(!is.finite(delta)) || any(!is.finite(sdv)) ||
+        any(sdv < 1e-6) || any(sdv > 1e3)) return(1e10)
     tt <- tau0
     tt[free] <- vapply(seq_along(free), function(k)
-      copulaXToTau(pv[d + k], fams[free[k]], rots[free[k]]), numeric(1))
+      copulaXToTau(pv[nMu + d + k], fams[free[k]], rots[free[k]]), numeric(1))
     v <- try(build(tt), silent = TRUE)
     if (inherits(v, "try-error")) return(1e10)
-    val <- -sum(w * copulaLogPrior(E, v, sdv))
+    val <- -sum(w * copulaLogPrior(sweep(E, 2, delta, "-"), v, sdv))
     if (!is.finite(val)) 1e10 else val
   }
   base <- negQ(par0)
   op <- try(stats::optim(par0, negQ, method = "BFGS", control = list(maxit = maxit)),
             silent = TRUE)
   if (inherits(op, "try-error") || !is.finite(op$value) || op$value >= base)
-    return(list(sd = sd0, vine = vine0, conv = -1L))
+    return(list(sd = sd0, vine = vine0, delta = rep(0, d), conv = -1L))
   tt <- tau0
   tt[free] <- vapply(seq_along(free), function(k)
-    copulaXToTau(op$par[d + k], fams[free[k]], rots[free[k]]), numeric(1))
-  list(sd = exp(op$par[seq_len(d)]), vine = build(tt), conv = op$convergence)
+    copulaXToTau(op$par[nMu + d + k], fams[free[k]], rots[free[k]]), numeric(1))
+  list(sd = exp(op$par[nMu + seq_len(d)]), vine = build(tt),
+       delta = if (nMu) op$par[seq_len(nMu)] else rep(0, d),
+       conv = op$convergence)
 }
 
 copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma = 1) {
@@ -276,6 +295,7 @@ copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma =
       sdNew <- pmax(sdNew, .cop$sdPrev * sqrt(alpha1Sa))
     .cop$sdPrev <- sdNew; .cop$sd <- sdNew
     if (!isTRUE(.cop$freezeVine)) .cop$vine <- jm$vine
+    .cop$delta <- jm$delta
     if (isTRUE(.cop$verbose))
       .cop$trace[[length(.cop$trace) + 1L]] <- list(
         kiter = kiter, sd = sdNew, npool = nrow(E), conv = jm$conv,

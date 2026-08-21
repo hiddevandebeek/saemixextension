@@ -89,6 +89,25 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		omSS<-suffStat$statphi2/Dargs$N + t(e1.phi)%*%e1.phi/Dargs$N - t(suffStat$statphi1)%*%e1.phi/Dargs$N - t(e1.phi)%*%suffStat$statphi1/Dargs$N
 		copulaMstep(kiter, opt$nbiter.sa, opt$alpha1.sa,
 		            sdSS=sqrt(pmax(mydiag(omSS), .Machine$double.eps)), gamma=opt$stepsize[kiter])
+		## mode="joint" also maximises Q over a location shift; push it back into
+		## betas by least squares on the design matrix, which is exact whenever
+		## the shift lies in the column space of COV (it does: COV always has an
+		## intercept per parameter).  Without this mu solves E[eta]=0, an
+		## estimating equation rather than the score, and the fit is not an MLE.
+		.dl<-copulaTakeDelta()
+		if(!is.null(.dl) && any(abs(.dl)>0)) {
+			## A location shift is exactly an intercept change, so add it to the
+			## intercept ROW of MCOV.  (A least-squares solve on COV is not safe:
+			## saemix's design matrix has structurally zero columns, so
+			## t(COV)%*%COV is singular.)
+			.ic<-which(apply(Uargs$COV,2,function(z) all(abs(z-1)<1e-12)))
+			if(length(.ic)>=1) {
+				varList$MCOV[.ic[1],varList$ind.eta]<-varList$MCOV[.ic[1],varList$ind.eta]+.dl
+				mean.phi<-Uargs$COV %*% varList$MCOV
+				betas[]<-varList$MCOV[Uargs$j.covariate]   # keep matrix shape
+				e1.phi<-mean.phi[,varList$ind.eta,drop=FALSE]
+			}
+		}
 		copulaDiag(kiter, betas, colMeans(etaPool), varList$pres, opt$stepsize[kiter])
 	}
 

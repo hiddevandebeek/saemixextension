@@ -4,3 +4,16 @@
    logSd1    grad=   +1.714 se=  0.115 |t|= 14.97  shift=+0.0116
    logSd2    grad=   -3.434 se=  0.134 |t|= 25.69  shift=-0.0253
    atanhTau  grad=   -0.060 se=  0.037 |t|=  1.63  shift=-0.0005
+[ifm rep 2] fixed point = 2.3248,1.0992,-1.4114,-1.4259,0.1872 (iters 4)
+   mu1       grad=   -2.532 se=  0.118 |t|= 21.53  shift=-0.0034
+   mu2       grad=   +1.464 se=  0.045 |t|= 32.41  shift=+0.0019
+   logSd1    grad=   -0.841 se=  0.044 |t|= 19.10  shift=-0.0103
+   logSd2    grad=   +1.155 se=  0.058 |t|= 20.02  shift=+0.0128
+   atanhTau  grad=   +0.119 se=  0.070 |t|=  1.70  shift=+0.0011
+
+== ifm, N=40: mean |t| and mean |shift| over 2 reps ==
+   mu1       mean|t|=  44.27  mean|shift|=0.0058  signs=+-
+   mu2       mean|t|=  32.67  mean|shift|=0.0056  signs=-+
+   logSd1    mean|t|=  17.03  mean|shift|=0.0110  signs=+-
+   logSd2    mean|t|=  22.86  mean|shift|=0.0190  signs=-+
+   atanhTau  mean|t|=   1.67  mean|shift|=0.0008  signs=-+
