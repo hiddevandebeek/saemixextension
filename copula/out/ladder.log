@@ -12,3 +12,14 @@ oral1  d=3 null rep1  err s/c = 0.0410/0.0387   tauErr s/c = 0.046/0.045  gaussi
 oral1  d=3 null rep2  err s/c = 0.0387/0.0393   tauErr s/c = 0.103/0.116  gaussian,gaussian,gaussian
 oral1  d=3 null rep3  err s/c = 0.0466/0.0499   tauErr s/c = 0.072/0.076  gaussian,gaussian,gaussian
 oral1  d=3 null rep4  err s/c = 0.0499/0.0508   tauErr s/c = 0.055/0.058  gaussian,gaussian,gaussian
+oral1  d=3 null rep5  err s/c = 0.0486/0.0445   tauErr s/c = 0.055/0.052  gaussian,gaussian,gaussian
+oral1  d=3 alt  rep1  err s/c = 0.0618/0.0616   tauErr s/c = 0.029/0.054  frank,gumbel,gumbel
+oral1  d=3 alt  rep2  err s/c = 0.0324/0.0315   tauErr s/c = 0.109/0.122  gumbel,gumbel,gumbel
+oral1  d=3 alt  rep3  err s/c = 0.0395/0.0353   tauErr s/c = 0.066/0.045  gaussian,gumbel,gaussian
+oral1  d=3 alt  rep4  err s/c = 0.0356/0.0370   tauErr s/c = 0.024/0.023  clayton,gaussian,gaussian
+oral1  d=3 alt  rep5  err s/c = 0.0437/0.0448   tauErr s/c = 0.025/0.033  gaussian,gumbel,frank
+iv2    d=4 null rep1  err s/c = 0.0440/0.0624   tauErr s/c = 0.055/0.055  gaussian,gaussian,gaussian,gaussian,gaussian,gaussian
+iv2    d=4 null rep2  err s/c = 0.0555/0.0499   tauErr s/c = 0.086/0.077  gaussian,gaussian,gaussian,gaussian,gaussian,gaussian
+iv2    d=4 null rep3  err s/c = 0.0445/0.0442   tauErr s/c = 0.086/0.076  gaussian,gaussian,gaussian,gaussian,gaussian,gaussian
+iv2    d=4 null rep4  err s/c = 0.0454/0.0711   tauErr s/c = 0.046/0.208  gaussian,gaussian,gaussian,gaussian,gaussian,gaussian
+iv2    d=4 null rep5  err s/c = 0.0386/0.0400   tauErr s/c = 0.050/0.051  gaussian,gaussian,gaussian,gaussian,gaussian,gaussian

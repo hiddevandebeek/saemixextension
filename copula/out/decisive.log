@@ -1,0 +1,18 @@
+iv2      rep1  err s/c = 0.0440/0.0624  ratio=1.42  maxShrink=0.251
+iv2      rep2  err s/c = 0.0555/0.0499  ratio=0.90  maxShrink=0.201
+iv2      rep3  err s/c = 0.0445/0.0442  ratio=0.99  maxShrink=0.219
+iv2      rep4  err s/c = 0.0454/0.0711  ratio=1.57  maxShrink=0.192
+iv2      rep5  err s/c = 0.0386/0.0400  ratio=1.04  maxShrink=0.205
+iv2rich  rep1  err s/c = 0.0499/0.0500  ratio=1.00  maxShrink=0.025
+iv2rich  rep2  err s/c = 0.0468/0.0461  ratio=0.99  maxShrink=0.023
+iv2rich  rep3  err s/c = 0.0348/0.0373  ratio=1.07  maxShrink=0.027
+iv2rich  rep4  err s/c = 0.0420/0.0443  ratio=1.06  maxShrink=0.038
+iv2rich  rep5  err s/c = 0.0359/0.0315  ratio=0.88  maxShrink=0.026
+
+model     errStock    errCop   ratio  maxShrink
+iv2         0.0456    0.0535    1.17      0.213
+  per-par stock : 0.029 0.028 0.021 0.030 0.055 0.043 0.088 0.071 
+  per-par copula: 0.030 0.027 0.017 0.053 0.053 0.056 0.082 0.112 
+iv2rich     0.0419    0.0418    1.00      0.028
+  per-par stock : 0.022 0.024 0.016 0.030 0.036 0.039 0.056 0.112 
+  per-par copula: 0.022 0.024 0.017 0.029 0.036 0.043 0.055 0.109 
