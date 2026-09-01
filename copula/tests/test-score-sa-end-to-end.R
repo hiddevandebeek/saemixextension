@@ -52,4 +52,26 @@ stopifnot(inherits(fit, "SaemixObject"),
   state$lastJoint$postFreezeNoMoveCount == 0L,
   isTRUE(state$lastJoint$usedAverage))
 
+selection <- suppressWarnings(copulaSelectEtaMargins(fit,
+  candidates = c("normal", "laplace"), posteriorDraws = 50L,
+  max.iter = 50L, optimizerMaxit = 20L,
+  minimumEssFraction = 1e-4, maximumMcse = 5))
+stopifnot(inherits(selection, "saemixEtaMarginSelection"),
+  nrow(selection$table) == 4L,
+  all(is.finite(selection$table$validation_delta_loglik)),
+  inherits(selection$population, "saemixPopulation"),
+  isTRUE(selection$diagnostics$selectionOutsideScoreSa),
+  isTRUE(selection$diagnostics$fixedDuringFinalFit),
+  is.finite(selection$diagnostics$trainingMcmc$minimumMcmcEssFraction),
+  is.finite(selection$diagnostics$validationMcmc$minimumMcmcEssFraction))
+refitControl <- control
+refitControl$seed <- control$seed + 1L
+refitControl$nbiter.saemix <- c(8L, 8L)
+refit <- saemix(saemixModelFor(modelDefinition), saemixDataFor(dataset),
+  refitControl, population = selection$population)
+refitState <- copulaGet(refit)
+stopifnot(identical(vapply(refitState$margins[seq_len(refitState$dEta)],
+    `[[`, character(1), "name"), as.character(selection$families)),
+  identical(refitState$populationAlgorithm, "score-sa"))
+
 cat("score-SA full saemix end-to-end check passed\n")

@@ -48,6 +48,9 @@ Automatic family selection applies to continuous covariates. The selected
 family is fixed before stochastic-approximation estimation begins. Eta margins
 are Normal when declared through \code{etaSd}; non-Normal eta families are
 supplied explicitly through \code{etaMargins}.
+After fitting this incumbent, \code{copulaSelectEtaMargins()} can screen
+Normal, Student, and Laplace eta-family combinations from full posterior draws
+and return a fixed declaration for a fresh fit.
 
 Every custom margin must declare its support. Fixed-support margins use
 \code{support_fixed = TRUE}. A proper continuous margin may use
@@ -73,5 +76,6 @@ population <- gaussianCopulaFrem(
 fit <- saemix(model, data, control, population = population)
 }
 }
-\seealso{\code{\link{copulaPopulation}}, \code{\link{saemix}}}
+\seealso{\code{\link{copulaPopulation}},
+\code{\link{copulaSelectEtaMargins}}, \code{\link{saemix}}}
 \keyword{models}

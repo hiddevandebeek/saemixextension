@@ -45,12 +45,30 @@ covariate margins are supported under the conditions documented in the
 package. The fitted Gaussian-copula FREM can be converted to an exact
 conditional full-covariate representation with `copulaFremToFfem()`.
 
-Automatic detection currently applies to continuous covariates only. Binary,
+Initial automatic detection applies to continuous covariates only. Binary,
 ordinal, and other categorical variables must be declared explicitly because
-their scientific meaning cannot be inferred safely from numeric codes. Eta
-family selection is also explicit: `etaSd` declares Normal eta margins, while
-non-Normal eta margins are supplied through `etaMargins`. This keeps discrete
-model selection separate from the fixed-model estimator used in the paper.
+their scientific meaning cannot be inferred safely from numeric codes. The
+incumbent eta model is explicit: `etaSd` declares Normal eta margins, while
+non-Normal eta margins can be supplied through `etaMargins`. The optional outer
+posterior screen below can then automate eta-family selection without changing
+families inside the fixed-model estimator.
+
+Eta families can also be selected from full individual posterior draws:
+
+```r
+incumbent <- saemix(model, data, control, population = population)
+selection <- copulaSelectEtaMargins(
+  incumbent,
+  candidates = c("normal", "student", "laplace")
+)
+final <- saemix(model, data, control,
+  population = selection$population)
+```
+
+The selector fits candidate parameters with one posterior pool, ranks them
+with an independently generated pool, and reports importance ESS, batch-means
+Monte Carlo error, and whether the leading BIC ranking is resolved. Families
+remain fixed throughout the fresh final score-SA fit.
 
 ## Installation
 

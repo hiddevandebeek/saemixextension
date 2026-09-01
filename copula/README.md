@@ -39,8 +39,24 @@ population <- gaussianCopulaFrem(
 )
 ```
 
-Automatic selection is limited to continuous covariates. Categorical margins
-and non-Normal eta-margin families must be declared explicitly.
+The initial incumbent uses declared eta margins, normally through `etaSd`.
+Categorical covariates must be declared explicitly; non-Normal eta families may
+either be declared or selected by the separate posterior screen below.
+
+For optional automatic eta-family screening, first fit the Gaussian incumbent,
+then use full posterior draws and start a fresh fixed-model fit:
+
+```r
+incumbent <- saemix(model, data, control, population = population)
+selection <- copulaSelectEtaMargins(incumbent)
+final <- saemix(model, data, control,
+  population = selection$population)
+```
+
+`selection$table` reports the independent validation-BIC advantage, ESS,
+Monte Carlo error, and eligibility of every candidate combination. If
+`selection$diagnostics$selectionResolved` is false, increase
+`posteriorDraws`; do not treat the current ranking as automatic evidence.
 
 Omitting `population`, or passing `population = NULL`, uses unmodified stock
 Gaussian saemix behavior.

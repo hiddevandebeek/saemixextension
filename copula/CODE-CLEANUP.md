@@ -26,6 +26,7 @@ a population object retains the ordinary Gaussian saemix path.
 - `R/gaussianCopulaFrem.R`: density, conditioning, augmentation and sampling.
 - `R/copulaScoreSa.R`: complete-data score and stochastic-approximation step.
 - `R/copulaScoreRuntime.R`: integration with the saemix M-step.
+- `R/copulaEtaSelection.R`: outer full-posterior eta-family screening.
 - `R/copulaLikelihood.R`: observed likelihood and individual conditionals.
 - `R/copulaFfem.R`: exact conditional full covariate representation.
 

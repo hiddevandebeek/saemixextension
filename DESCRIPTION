@@ -66,5 +66,6 @@ Collate:
     'copulaFfem.R'
     'copulaScoreSa.R'
     'copulaScoreRuntime.R'
+    'copulaEtaSelection.R'
     'stepwise.R'
     'zzz.R'

@@ -13,6 +13,8 @@ abstract: |
   jointly by controlled-MCMC stochastic approximation. The fitted conditional
   model has an exact conventional FFEM representation when parameter margins
   are Normal and an exact conditional generative representation otherwise.
+  An optional outer selection step ranks eta-margin families with independent
+  full-posterior samples before a fresh fixed-model fit.
   In 400 simulated nonlinear mixed-effects datasets, structural-parameter bias
   remained within 0.47%. Relative to Gaussian FREM, mean differences in
   observed log likelihood were 4.30--9.41 under non-Gaussian data-generating
@@ -74,8 +76,9 @@ with individual parameters and missing covariates treated as unobserved data.
 
 The objectives of this work were to define the flexible-margin FREM model,
 derive its observed-data likelihood and an exact FFEM translation, develop a
-likelihood-based stochastic-approximation estimator, and evaluate parameter
-recovery and conditional prediction in a simulation study.
+likelihood-based stochastic-approximation estimator, develop posterior-based
+eta-margin selection without changing families during estimation, and evaluate
+parameter recovery and conditional prediction in simulation studies.
 
 # METHODS
 
@@ -380,6 +383,56 @@ stationary set, not convergence to a global maximum. It is distinct from
 Delyon et al. Theorems 5 and 8, which concern finite-statistic SAEM. Appendix B
 maps the assumptions to controlled-Markov results [@andrieu2005; @fort2016].
 
+## Posterior-based eta-margin selection
+
+Eta-margin families are discrete model choices and are not changed during
+recursion (10). They may instead be screened before a fresh fixed-model fit by
+reusing the complete individual posterior distribution from a fitted Gaussian
+incumbent. Let $f_{0i}$ and $g_{0i}$ denote the incumbent complete- and
+observed-data likelihoods, and let
+$\pi_{0i}(z)=f_{0i}(z)/g_{0i}$ be its individual conditional distribution. For
+a candidate model $m$ with the same observation model, population locations,
+covariate margins and Gaussian dependence during screening,
+
+\[
+ \frac{g_{mi}}{g_{0i}}
+ =E_{\pi_{0i}}\!\left\{\frac{f_{mi}(Z_i)}{f_{0i}(Z_i)}\right\}
+ =E_{\pi_{0i}}\!\left\{
+   \frac{p_m(\eta_i,c_i)}{p_0(\eta_i,c_i)}\right\}.       \tag{13a}
+\]
+
+Thus full posterior draws, unlike EBEs, retain individual uncertainty and give
+an observed-likelihood comparison for the screened population change. The
+implementation generates two posterior pools with independent random-number
+streams. Candidate margin parameters are optimized on the first pool. The
+second pool gives the validation criterion
+
+\[
+ 2\sum_{i=1}^N\log\!\left[
+   \frac{1}{M}\sum_{r=1}^M
+   \frac{p_m(\eta_i^{(r)},c_i)}
+        {p_0(\eta_i^{(r)},c_i)}\right]
+ -(k_m-k_0)\log N,                                      \tag{13b}
+\]
+
+which is the candidate's validation BIC advantage relative to the incumbent.
+The current candidate set comprises centred Normal, Student and Laplace eta
+margins. All combinations up to a prespecified cap are evaluated while the
+incumbent Gaussian dependence and non-eta margins are held fixed. Posterior-
+chain ESS and acceptance, subject-level importance ESS, batch-means Monte Carlo
+standard error and separation of the leading criterion from its runner-up are
+reported. An unresolved screen is not accepted automatically; posterior
+sampling must be increased or the scientifically prespecified candidate set
+reduced.
+
+The selected family combination is subsequently frozen and passed to a fresh
+score stochastic-approximation fit, which re-estimates population locations,
+margin parameters, Gaussian dependence and residual error. Consequently, the
+convergence result in (13) applies to the fresh fixed-model fit, not to the
+preceding discrete selection operation. Final model assessment may additionally
+compare independently evaluated observed likelihoods after refitting the
+leading candidates.
+
 ## Conditional representation and FFEM translation
 
 For a selected covariate subset $S$, let $z_{iS}$ contain the corresponding
@@ -509,6 +562,17 @@ from 150,000 virtual subjects using common random numbers. Empirical validation
 quantiles were calculated independently from 1,500 subjects. Predictive error
 was the RMSE of log-transformed 10th, 50th and 90th percentiles over seven time
 points.
+
+The posterior selection identity was evaluated separately in an additive
+latent model, $Y_i=\eta_i+\epsilon_i$, where the direct observed likelihood is
+available analytically for Normal and Laplace eta margins. Twelve datasets per
+generating family were simulated with $N=100$, eta standard deviation 0.45 and
+residual standard deviation 0.25. A fitted Gaussian incumbent supplied 2,000
+posterior draws per subject for each of two independently generated pools.
+Candidate scale parameters were fitted on the first pool and family rankings
+were evaluated on the second. A weak-information setting used residual standard
+deviation 0.60; discordant close comparisons were repeated with 20,000 draws
+per subject.
 
 # RESULTS
 
@@ -659,6 +723,23 @@ FFEM conditional densities were identical to numerical precision, and the
 translated and direct concentration predictions were identical for every
 tested draw.
 
+In the informative posterior-selection experiment, the posterior criterion and
+direct observed likelihood selected the same family in all 24 datasets. Both
+selected Normal in 12 of 12 Normal datasets. Both selected Laplace in 11 of 12
+Laplace datasets; the remaining finite dataset was ranked as Normal by the
+direct likelihood as well. The RMSE of the posterior estimate of the direct
+candidate log likelihood was below 0.001 for Normal candidates and 0.071 for
+Laplace candidates, with the larger error reflected by their reported Monte
+Carlo standard errors.
+
+With weaker individual information and 2,000 posterior draws, the posterior
+and direct rankings agreed in 22 of 24 datasets. The two discordant datasets
+had direct Laplace-versus-Normal log-likelihood advantages of 0.164 and 0.114
+and low tail-overlap diagnostics. Repeating those comparisons with 20,000 draws
+recovered the direct Laplace ranking in both cases. These results support
+adaptive posterior sampling and explicit overlap gates rather than a fixed
+draw count for automatic selection.
+
 # DISCUSSION
 
 The proposed extension replaces the multivariate Normal population
@@ -692,6 +773,16 @@ and critical-value assumptions. The reported numerical diagnostics establish
 that the finite-run stabilization criteria were satisfied, but do not
 establish these asymptotic assumptions.
 
+The posterior eta-margin screen uses the same observed-likelihood principle
+without treating conditional modes as population observations. Its independent
+validation pool limits optimization bias, while ESS and Monte Carlo error make
+weak overlap visible. The Gaussian incumbent has full real support for the
+currently screened families, but heavier-tailed candidates can still produce
+high-variance likelihood ratios. Such candidates require additional draws or a
+defensive proposal; they should not be discarded merely because a small
+posterior pool is unstable. Family selection remains outside the score
+recursion, and the selected model is always estimated afresh.
+
 Model-based copulas have previously been used in pharmacometrics to generate
 virtual populations from covariate distributions [@guo2024]. The present
 extension concerns likelihood-based estimation of the joint parameter-
@@ -699,8 +790,9 @@ covariate distribution within a nonlinear mixed-effects model.
 
 The simulation is exploratory: one PK model, 100 datasets per scenario,
 prespecified families and a Gaussian finite initializer were used. Coverage,
-observed-information standard errors, cold-start sensitivity, automatic family
-learning and powered categorical or moving-support studies remain future work.
+observed-information standard errors, cold-start sensitivity, broader
+posterior-selection candidate libraries and powered categorical or
+moving-support studies remain future work.
 General non-Gaussian R-vines require additional score calculations and are
 outside the fixed Gaussian-copula scope. The continuous margins considered here
 must be proper, differentiable and identifiable with finite score moments on
@@ -724,7 +816,10 @@ estimated joint log likelihoods and more accurate prediction conditional on
 extreme covariate values under non-Gaussian data-generating distributions. The
 fitted conditional model can be exported without loss to a conventional FFEM
 when parameter margins are Normal and to the exact conditional generative
-representation otherwise.
+representation otherwise. Eta-margin families can be screened from full
+incumbent-posterior draws, with independent validation and overlap diagnostics,
+before beginning the fresh fixed-model fit to which the convergence result
+applies.
 
 # DECLARATIONS
 
@@ -849,14 +944,42 @@ $\eta_P=Q_\eta\{\Phi(\xi_P)\}$, (A3) gives
  B_{\xi,S}z_S(c_S)+L_S\varepsilon\right\}\right].        \tag{A4}
 \]
 
-Equation (A4) is the distributional FFEM representation in the main text and
-has exactly the same conditional law as the fitted FREM. For an ordered
+Equation (A4) is the exact non-Normal conditional representation in the main
+text and has the same conditional law as the fitted FREM. For an ordered
 categorical covariate, conditioning is instead on its latent Gaussian interval;
 integrating (A3) over the corresponding truncated-Normal score distribution
 gives the stated interval mixture. Finally, direct FREM and translated-FFEM
 predictions integrate the same response kernel $p(Y\mid\eta_P)$ against this
 same conditional distribution. Their conditional predictive distributions are
 therefore identical when the population parameters are held fixed.
+
+## Posterior likelihood-ratio identity
+
+Let $f_{0i}$ and $f_{mi}$ be incumbent and candidate complete-data densities
+with respect to the same fixed measure $\lambda$, and assume
+$f_{mi}=0$ wherever the ratio is otherwise undefined. Since
+$\pi_{0i}=f_{0i}/g_{0i}$,
+
+\[
+\begin{aligned}
+E_{\pi_{0i}}\!\left(\frac{f_{mi}}{f_{0i}}\right)
+ &=\int \frac{f_{mi}(z)}{f_{0i}(z)}
+       \frac{f_{0i}(z)}{g_{0i}}\,\lambda(dz)\\
+ &=\frac{1}{g_{0i}}\int f_{mi}(z)\,\lambda(dz)
+ =\frac{g_{mi}}{g_{0i}}.
+\end{aligned}                                             \tag{A5}
+\]
+
+When only the eta population distribution changes, the common response density
+cancels from $f_{mi}/f_{0i}$, giving (13a). The Gaussian incumbent is positive
+on the real eta space used by the current Normal, Student and Laplace
+candidates. Equation (A5) establishes the likelihood identity, but not finite-
+sample stability of its importance estimator. Finite second moments, adequate
+tail overlap and sufficient MCMC mixing remain numerical requirements.
+Optimizing candidate parameters and validating their ranking on independently
+generated posterior pools separates fitting noise from the reported comparison.
+Once a family is selected, the posterior pools are discarded and a fresh fixed-
+model score fit is initialized.
 
 # Controlled kernel and convergence details
 
