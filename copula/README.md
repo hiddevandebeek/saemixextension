@@ -34,10 +34,13 @@ population <- gaussianCopulaFrem(
   covariates = subjectData[, c("WT", "eGFR")],
   covariateMargins = list(
     copulaMarginCovariateLognormal(log(70), 0.20),
-    copulaMarginCovariateGamma(12, 7.5)
+    copulaMarginCovariateGamma(7.5, 12)
   )
 )
 ```
+
+Automatic selection is limited to continuous covariates. Categorical margins
+and non-Normal eta-margin families must be declared explicitly.
 
 Omitting `population`, or passing `population = NULL`, uses unmodified stock
 Gaussian saemix behavior.

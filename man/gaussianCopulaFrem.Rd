@@ -19,9 +19,10 @@ margin. Supply this or \code{etaMargins}.}
 \item{covariates}{Optional numeric matrix with one subject per row. Missing
 values may be \code{NA}.}
 \item{covariateMargins}{One declared margin per covariate, or \code{"auto"}
-for support-aware selection among Normal, lognormal, Gamma, and Weibull.
-Explicit declarations may contain multiple dependent binary, ordinal, or
-ordered nominal categorical margins.}
+for marginal-AIC selection among Normal, lognormal, Gamma, and Weibull using
+the observed non-missing values. Explicit declarations may contain multiple
+dependent binary, ordinal, or ordered nominal categorical margins; categorical
+meaning is not inferred automatically from numeric codes.}
 \item{correlation}{Initial joint Gaussian-copula correlation matrix. The
 default is independence.}
 \item{structure}{Optional full R-vine structure used only to parameterize the
@@ -42,6 +43,11 @@ The returned model has a fixed full Gaussian copula, fixed declared marginal
 families, joint observed-data likelihood, exact numerical policy, and the
 likelihood-score estimator. It does not expose the legacy retained-particle,
 general R-vine, adaptive-selection, or conditional-likelihood controls.
+
+Automatic family selection applies to continuous covariates. The selected
+family is fixed before stochastic-approximation estimation begins. Eta margins
+are Normal when declared through \code{etaSd}; non-Normal eta families are
+supplied explicitly through \code{etaMargins}.
 
 Every custom margin must declare its support. Fixed-support margins use
 \code{support_fixed = TRUE}. A proper continuous margin may use

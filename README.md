@@ -14,6 +14,23 @@ with `population = NULL`, retains the stock Gaussian workflow.
 ```r
 population <- gaussianCopulaFrem(
   etaSd = c(0.25, 0.30),
+  covariates = subjectData[, c("WT", "eGFR")]
+)
+
+fit <- saemix(model, data, control, population = population)
+```
+
+The default `covariateMargins = "auto"` selects a continuous family for each
+covariate from Normal, lognormal, Gamma, and Weibull using marginal AIC on its
+observed values. The selected families are then fixed during the likelihood-
+score fit.
+
+For a prespecified or exactly reproducible analysis, provide the margins
+explicitly:
+
+```r
+population <- gaussianCopulaFrem(
+  etaSd = c(0.25, 0.30),
   covariates = subjectData[, c("WT", "eGFR")],
   covariateMargins = list(
     copulaMarginCovariateLognormal(log(70), 0.20),
@@ -21,13 +38,19 @@ population <- gaussianCopulaFrem(
   )
 )
 
-fit <- saemix(model, data, control, population = population)
 ```
 
 Continuous, moving-support, binary, ordinal and explicitly ordered categorical
 covariate margins are supported under the conditions documented in the
 package. The fitted Gaussian-copula FREM can be converted to an exact
 conditional full-covariate representation with `copulaFremToFfem()`.
+
+Automatic detection currently applies to continuous covariates only. Binary,
+ordinal, and other categorical variables must be declared explicitly because
+their scientific meaning cannot be inferred safely from numeric codes. Eta
+family selection is also explicit: `etaSd` declares Normal eta margins, while
+non-Normal eta margins are supplied through `etaMargins`. This keeps discrete
+model selection separate from the fixed-model estimator used in the paper.
 
 ## Installation
 

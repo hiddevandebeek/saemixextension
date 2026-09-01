@@ -4,6 +4,12 @@ set.seed(290827L)
 covariates <- cbind(
   WT = stats::rlnorm(40, log(70), .2),
   eGFR = stats::rnorm(40, 90, 22))
+automatic <- gaussianCopulaFrem(
+  etaSd = c(.22, .30), covariates = covariates)
+stopifnot(length(automatic$arguments$margins) == 4L,
+  all(vapply(automatic$arguments$margins[3:4], function(margin)
+    identical(margin$metadata$selection$criterion, "AIC"), logical(1))))
+
 population <- gaussianCopulaFrem(
   etaSd = c(.22, .30), covariates = covariates,
   covariateMargins = list(
