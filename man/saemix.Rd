@@ -7,7 +7,7 @@
 \alias{estep}
 \title{Stochastic Approximation Expectation Maximization (SAEM) algorithm}
 \usage{
-saemix(model, data, control = list())
+saemix(model, data, control = list(), population = NULL)
 }
 \arguments{
 \item{model}{an object of class SaemixModel, created by a call to the
@@ -17,6 +17,11 @@ function \code{\link{saemixModel}}}
 \code{\link{saemixData}}}
 
 \item{control}{a list of options, see \code{\link{saemixControl}}}
+
+\item{population}{optional population-distribution specification created by
+\code{\link{copulaPopulation}}. Explicit \code{NULL} selects the ordinary
+Gaussian saemix model and algorithm. For compatibility, omission uses a
+preceding low-level \code{copulaSet} declaration when one is active.}
 }
 \value{
 An object of class SaemixObject containing the results of the fit of

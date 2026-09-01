@@ -4,10 +4,13 @@
 \alias{llis.saemix}
 \title{Log-likelihood using Importance Sampling}
 \usage{
-llis.saemix(saemixObject)
+llis.saemix(saemixObject, ...)
 }
 \arguments{
 \item{saemixObject}{an object returned by the \code{\link{saemix}} function}
+
+\item{...}{additional arguments for the fitted population model's importance
+sampling engine, such as \code{defensive}, \code{batch}, and \code{seed}.}
 }
 \value{
 the log-likelihood estimated by Importance Sampling

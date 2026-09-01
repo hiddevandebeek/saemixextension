@@ -136,6 +136,8 @@
 #' @export conddist.saemix
 
 conddist.saemix<-function(saemixObject, nsamp=1, max.iter=NULL, plot=FALSE, ...) {
+	if(!is.null(attr(saemixObject,"saemix.copula",exact=TRUE)))
+		return(conddistCopula.saemix(saemixObject,nsamp,max.iter,plot,...))
   # Estimate conditional means and estimates for the individual parameters PSI_i using the MCMC algorithm
   # nsamp= number of MCMC samples
   # max.iter= max nb of iterations
@@ -299,8 +301,10 @@ conddist.saemix<-function(saemixObject, nsamp=1, max.iter=NULL, plot=FALSE, ...)
       eik1<-eik
       eik<-eik*(k-1)/k+phik/k
       varik<-varik*(k-1)/k+(phik**2)/k + (eik1**2)*(k-1)/k-(eik**2)
-      sdik<-sqrt(varik)
-      sdik[sdik<0]<-0
+      ## Online second moments can be a few ulps below zero through cancellation.
+      ## The variance is non-negative by construction; clamp before sqrt so the
+      ## conditional sampler does not emit or propagate anonymous NaNs.
+      sdik<-sqrt(pmax(varik,0))
       ij<-(k-1)*N
       econd[,(ij+1):(ij+N),]<-eik
       sdcond[,(ij+1):(ij+N),]<-sdik

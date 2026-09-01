@@ -1,435 +1,359 @@
-## Copula prior on the random effects (research extension).
-##
-## MODEL
-##   eta_j ~ N(0, sd_j^2)                      marginals stay Gaussian
-##   (u_1..u_d) ~ R-vine copula                dependence is the new part
-##   u_j = pnorm(eta_j / sd_j)
-##
-## With Gaussian pair copulas everywhere this is EXACTLY MVN(0, Omega)
-## (Bedford-Cooke), so the stock saemix model is the nested null.  estep() and
-## mstep() take the copula path only when copulaSet() has been called; otherwise
-## they are bit-identical to stock saemix.
-##
-## WHAT IS AND IS NOT JUSTIFIED
-## The complete-data likelihood is NOT in the curved exponential family once any
-## pair copula is non-Gaussian, so assumption (M1) of Delyon et al. (1999) fails
-## and there is no finite sufficient statistic.  Q-hat is instead carried as a
-## WEIGHTED PARTICLE POOL -- which is Delyon's general recursion (their eq. 6)
-## with Q-hat represented by a weighted empirical measure.  Correct algorithm,
-## no theorem.  The M-step is IFM (margins by weighted moments, copula by
-## weighted MLE), not the exact joint maximiser; convergence is checked
-## empirically, never assumed.
-##
-## ORDERING CONTRACT: vine variable j == eta column j == varList$ind.eta[j].
+## Runtime state for the fixed Gaussian-copula score model.
 
 .cop <- new.env(parent = emptyenv())
+.trc <- new.env(parent = emptyenv())
 
 copulaClear <- function() rm(list = ls(.cop), envir = .cop)
 
-#' @param vine       rvinecopulib vinecop_dist on d = length(ind.eta) variables
-#' @param familySet  families the M-step may select from; NULL = keep structure
-#'                   and families fixed, refit parameters only
-#' @param poolMax    max SA particle-pool size (iterations retained)
-#' @param refitEvery refit the vine every k iterations (the M-step is the
-#'                   expensive part; k>1 is a deliberate ECM-style delay)
-copulaSet <- function(vine, sd, familySet = NULL, poolMax = 40L,
-                      refitEvery = 1L, fitFrom = 1L, verbose = FALSE,
-                      freezeSd = FALSE, freezeVine = FALSE,
-                      mode = c("pool", "sa", "joint"), sdFromSS = TRUE, truncLvl = Inf) {
-  mode <- match.arg(mode)
+copulaPopulation <- function(vine, margins = NULL, sd = NULL,
+                             scale = c("auto", "transformed-additive"),
+                             conditioning = NULL,
+                             populationAlgorithm = "score-sa",
+                             scoreScale = 0.05, scoreFiniteDifference = 1e-4,
+                             scoreProjection = 24, scoreGainScale = 0.2,
+                             scoreGainPower = 0.8, scoreGainOffset = 30,
+                             scoreBurn = 50L, ...) {
+  scale <- match.arg(scale)
+  structure(list(arguments = c(list(vine = vine, margins = margins, sd = sd,
+    populationScale = scale, conditioning = conditioning,
+    populationAlgorithm = populationAlgorithm, scoreScale = scoreScale,
+    scoreFiniteDifference = scoreFiniteDifference,
+    scoreProjection = scoreProjection, scoreGainScale = scoreGainScale,
+    scoreGainPower = scoreGainPower, scoreGainOffset = scoreGainOffset,
+    scoreBurn = scoreBurn), list(...))), class = "saemixPopulation")
+}
+
+copulaUsePopulation <- function(population) {
+  if (!inherits(population, "saemixPopulation") ||
+      !is.list(population$arguments))
+    stop("population must be created by copulaPopulation()")
+  do.call(copulaSet, population$arguments)
+  invisible(TRUE)
+}
+
+copulaRestoreState <- function(state) {
   copulaClear()
-  .cop$vine <- vine
-  .cop$sd <- sd
-  .cop$sdPrev <- sd          # anneal relative to the INITIAL sd, as stock does to omega.init
-  .cop$d <- length(sd)
-  .cop$familySet <- familySet
-  .cop$poolMax <- poolMax
-  .cop$refitEvery <- refitEvery
-  .cop$fitFrom <- fitFrom
-  .cop$verbose <- verbose
-  .cop$freezeSd <- freezeSd
-  .cop$freezeVine <- freezeVine
-  .cop$mode <- mode
-  .cop$jointMaxit <- 40L
-  .cop$sdFromSS <- sdFromSS
-  .cop$truncLvl <- truncLvl
-  .cop$famFixed <- NULL
-  .cop$poolEta <- NULL
-  .cop$poolW <- NULL
-  .cop$trace <- list()
-  .cop$diag <- list()
+  for (name in names(state)) assign(name, state[[name]], envir = .cop)
+  invisible(TRUE)
+}
+
+copulaVineForMargins <- function(vine, margins) {
+  types <- ifelse(vapply(margins, `[[`, character(1), "type") == "discrete",
+    "d", "c")
+  if (identical(as.character(vine$var_types), types)) return(vine)
+  suppressWarnings(rvinecopulib::vinecop_dist(
+    vine$pair_copulas, vine$structure, var_types = types))
+}
+
+copulaSet <- function(vine, margins = NULL, sd = NULL,
+                      conditioning = NULL,
+                      populationScale = c("auto", "transformed-additive"),
+                      populationAlgorithm = "score-sa",
+                      likelihoodTarget = "joint", familySet = NULL,
+                      selectStructure = FALSE, refitEvery = 1L,
+                      activeFrom = 1L, fitFrom = 1L,
+                      warmStartOnActivate = FALSE, guard = FALSE,
+                      numericalPolicy = "exact", scoreScale = 0.05,
+                      scoreFiniteDifference = 1e-4, scoreProjection = 24,
+                      scoreGainScale = 0.2, scoreGainPower = 0.8,
+                      scoreGainOffset = 30, scoreBurn = 50L, ...) {
+  previous <- as.list(.cop)
+  committed <- FALSE
+  on.exit(if (!committed) copulaRestoreState(previous), add = TRUE)
+  populationScale <- match.arg(populationScale)
+
+  dots <- list(...)
+  if (length(dots))
+    stop("unsupported population controls: ", paste(names(dots), collapse = ", "))
+  if (!identical(populationAlgorithm, "score-sa"))
+    stop("only the likelihood-score population estimator is supported")
+  if (!identical(likelihoodTarget, "joint") ||
+      !is.null(familySet) || isTRUE(selectStructure) ||
+      as.integer(refitEvery) != 1L || as.integer(activeFrom) != 1L ||
+      as.integer(fitFrom) != 1L)
+    stop("score-sa requires one fixed joint model from the first iteration")
+  if (!identical(numericalPolicy, "exact"))
+    stop("score-sa requires exact density evaluation")
+  if (!inherits(vine, "vinecop_dist"))
+    stop("vine must inherit from vinecop_dist")
+
+  d <- as.integer(vine$structure$d)
+  if (is.null(conditioning)) {
+    conditioningValues <- NULL
+    conditioningNames <- character()
+    dConditioning <- 0L
+  } else {
+    if (is.list(conditioning) && !is.data.frame(conditioning)) {
+      conditioningNames <- conditioning$variableName %||% character()
+      conditioningValues <- conditioning$values
+    } else {
+      conditioningNames <- character()
+      conditioningValues <- conditioning
+    }
+    conditioningValues <- as.matrix(conditioningValues)
+    storage.mode(conditioningValues) <- "double"
+    if (!nrow(conditioningValues) || !ncol(conditioningValues) ||
+        any(is.infinite(conditioningValues)))
+      stop("conditioning must be a non-empty numeric matrix; NA is allowed")
+    dConditioning <- ncol(conditioningValues)
+    if (dConditioning >= d || any(colSums(!is.na(conditioningValues)) == 0L))
+      stop("each conditioning coordinate needs observed values and one latent coordinate")
+    if (!length(conditioningNames)) conditioningNames <- colnames(conditioningValues)
+    if (is.null(conditioningNames) || length(conditioningNames) != dConditioning)
+      conditioningNames <- paste0("conditioning", seq_len(dConditioning))
+  }
+  dEta <- d - dConditioning
+
+  if (is.null(margins)) {
+    if (is.null(sd) || length(sd) != d || any(!is.finite(sd)) || any(sd <= 0))
+      stop("supply one margin per coordinate or positive Gaussian scales")
+    margins <- lapply(sd, copulaMarginNormal)
+  } else {
+    if (!is.null(sd) || !is.list(margins) || length(margins) != d)
+      stop("supply exactly one margin per vine coordinate")
+    lapply(margins, copulaMarginValidate)
+  }
+  etaMargins <- margins[seq_len(dEta)]
+  if (any(!vapply(etaMargins, `[[`, logical(1), "centered")) ||
+      any(vapply(etaMargins, function(m)
+        any(m$free & m$roles == "location"), logical(1))) ||
+      any(vapply(etaMargins, `[[`, character(1), "type") != "continuous") ||
+      any(!vapply(etaMargins, `[[`, logical(1), "scale_is_sd")))
+    stop("eta margins must be centered continuous laws with finite SD scales")
+
+  vine <- copulaVineForMargins(vine, margins)
+  if (!copulaIsFullGaussianVine(vine, d))
+    stop("score-sa requires a fixed full Gaussian R-vine")
+  numericScalar <- function(x, positive = FALSE) length(x) == 1L &&
+    is.finite(x) && (!positive || x > 0)
+  if (!numericScalar(scoreScale, TRUE) ||
+      !numericScalar(scoreFiniteDifference, TRUE) ||
+      !numericScalar(scoreProjection, TRUE) ||
+      !numericScalar(scoreGainScale, TRUE) ||
+      !numericScalar(scoreGainPower, TRUE) || scoreGainPower <= .75 ||
+      scoreGainPower > 1 || !numericScalar(scoreGainOffset) ||
+      scoreGainOffset < 0 || length(scoreBurn) != 1L ||
+      is.na(scoreBurn) || scoreBurn < 0)
+    stop("invalid score stochastic-approximation controls")
+
+  etaScale <- copulaMarginScales(margins)[seq_len(dEta)]
+  etaCorrelation <- copulaGaussianRvineCor(vine, d)[seq_len(dEta),
+    seq_len(dEta), drop = FALSE]
+  proposalOmega <- diag(etaScale, dEta) %*% etaCorrelation %*%
+    diag(etaScale, dEta)
+
+  copulaClear()
+  values <- list(vine = vine, margins = margins,
+    populationScale = "transformed-additive", populationAlgorithm = "score-sa",
+    likelihoodTarget = "joint", numericalPolicy = "exact",
+    d = d, dEta = dEta, dConditioning = dConditioning,
+    conditioning = conditioningValues,
+    conditioningName = as.character(conditioningNames),
+    sd = copulaMarginScales(margins), proposalOmega = proposalOmega,
+    scoreScale = as.numeric(scoreScale),
+    scoreFiniteDifference = as.numeric(scoreFiniteDifference),
+    scoreProjection = as.numeric(scoreProjection),
+    scoreGainScale = as.numeric(scoreGainScale),
+    scoreGainPower = as.numeric(scoreGainPower),
+    scoreGainOffset = as.numeric(scoreGainOffset), scoreBurn = as.integer(scoreBurn),
+    scoreState = NULL, mode = "joint", modelFrozen = TRUE,
+    activeFrom = 1L, activated = TRUE, augmentMissingGaussian = TRUE,
+    warmStartOnActivate = isTRUE(warmStartOnActivate), guard = isTRUE(guard),
+    estimatedMargins = TRUE, estimatedVine = TRUE,
+    locationRankChecked = FALSE, trace = list(), lastJoint = NULL,
+    timing = list(estep = 0, batchUpdate = 0, iteration = 0))
+  for (name in names(values)) assign(name, values[[name]], envir = .cop)
+  .cop$fingerprint <- copulaFingerprint(vine, d, margins)
+  committed <- TRUE
   invisible(TRUE)
 }
 
 copulaActive <- function() !is.null(.cop$vine)
+copulaActiveAt <- function(kiter) copulaActive()
+copulaStepSize <- function(kiter, stockGamma) stockGamma
+copulaActivateFromGaussian <- function(kiter, omega) invisible(FALSE)
 
-## Location shift the joint M-step wants applied to mean.phi (zero unless
-## mode="joint").  Consumed and cleared by mstep.
-copulaTakeDelta <- function() {
-  dl <- .cop$delta
-  .cop$delta <- NULL
-  if (is.null(dl)) NULL else dl
-}
-copulaGet <- function() as.list(.cop)
-
-## -log p(eta) up to an additive constant, matching saemix's U.eta convention.
-copulaUeta <- function(etaM) {
-  eta <- as.matrix(etaM)
-  if (ncol(eta) != .cop$d)
-    stop("copula prior: eta has ", ncol(eta), " columns, vine has ", .cop$d)
-  sdv <- .cop$sd
-  u <- pnorm(sweep(eta, 2, sdv, "/"))
-  u <- pmin(pmax(u, 1e-10), 1 - 1e-10)
-  lm <- rowSums(dnorm(sweep(eta, 2, sdv, "/"), log = TRUE)) - sum(log(sdv))
-  lc <- log(pmax(rvinecopulib::dvinecop(u, .cop$vine), 1e-300))
-  -(lm + lc)
+copulaRecordPhase <- function(kiter, gamma) {
+  .cop$lastGamma <- gamma
+  .cop$phase <- if (gamma >= 1 - sqrt(.Machine$double.eps))
+    "constant" else "decreasing"
+  invisible(.cop$phase)
 }
 
-## Draw n etas from the prior (kernel 1's independence proposal).
-copulaRandEta <- function(n) {
-  u <- rvinecopulib::rvinecop(n, .cop$vine)
-  sweep(qnorm(u), 2, .cop$sd, "*")
-}
+copulaProfileEvent <- function(...) invisible(NULL)
 
-## Copula-implied covariance of eta.  Used only where a Gaussian surrogate is
-## still needed: the betas GLS block and the random-walk step scaling.
-##
-## eta_j = sd_j * qnorm(u_j), so the implied CORRELATION depends on the vine
-## alone, not on sd.  Cache it per vine (refit is rare) and rescale for free;
-## fixed CRN keeps the map deterministic so no simulation noise enters the loop.
-copulaImpliedCor <- function(nsim = 20000L) {
-  if (!is.null(.cop$corVine) && identical(.cop$corVine, .cop$vine)) return(.cop$corCache)
-  ## Fixed CRN keeps sd -> Omega deterministic, but set.seed() here would reset
-  ## R's GLOBAL stream inside the SAEM loop and make the E-step replay identical
-  ## draws every iteration.  Save and restore around it.
-  R <- withSeed(9781L, stats::cor(qnorm(rvinecopulib::rvinecop(nsim, .cop$vine))))
-  .cop$corVine <- .cop$vine; .cop$corCache <- R
-  R
-}
-
-## Evaluate expr under a fixed seed WITHOUT disturbing the caller's RNG stream.
-withSeed <- function(seed, expr) {
-  hasOld <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
-  if (hasOld) old <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
-  on.exit({
-    if (hasOld) assign(".Random.seed", old, envir = globalenv())
+withSeed <- function(seed, expression) {
+  hadSeed <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (hadSeed) previous <- get(".Random.seed", envir = globalenv())
+  on.exit(if (hadSeed) assign(".Random.seed", previous, envir = globalenv())
     else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
-      rm(".Random.seed", envir = globalenv())
-  }, add = TRUE)
+      rm(".Random.seed", envir = globalenv()), add = TRUE)
   set.seed(seed)
-  expr
+  force(expression)
+}
+
+copulaTakeBeta <- function() {
+  value <- .cop$betaJoint
+  .cop$betaJoint <- NULL
+  value
+}
+
+copulaTakeResidual <- function() {
+  value <- .cop$residualJoint
+  .cop$residualJoint <- NULL
+  value
+}
+
+copulaAcceptedBeta <- function(current, fitted = NULL, locMap = NULL,
+                               betaFree = NULL) {
+  current <- as.numeric(current)
+  if (is.null(fitted) || length(fitted) != length(current) ||
+      any(!is.finite(fitted)) || is.null(locMap)) return(current)
+  active <- which(rowSums(abs(as.matrix(locMap))) > 0)
+  if (!is.null(betaFree)) active <- intersect(active, as.integer(betaFree))
+  current[active] <- fitted[active]
+  current
+}
+
+copulaGet <- function(object = NULL) {
+  if (is.null(object)) return(as.list(.cop))
+  state <- attr(object, "saemix.copula", exact = TRUE)
+  if (is.null(state)) stop("object does not contain a fitted copula state")
+  state
+}
+
+copulaSnapshot <- function(state = copulaGet(), etaIndex = NULL,
+                           variableName = NULL) {
+  keep <- c("vine", "margins", "sd", "d", "dEta", "dConditioning",
+    "conditioning", "conditioningName", "fingerprint", "modelFrozen",
+    "lastJoint", "npar.margin", "npar.vine", "estimatedMargins",
+    "estimatedVine", "timing", "trace", "populationScale", "proposalOmega",
+    "likelihoodTarget", "numericalPolicy", "populationAlgorithm",
+    "scoreScale", "scoreFiniteDifference", "scoreProjection",
+    "scoreGainScale", "scoreGainPower", "scoreGainOffset", "scoreBurn",
+    "scoreState", "rwProposalFrozen", "rwProposalFreezeIteration",
+    "rwBlockSizeFrozen")
+  out <- state[intersect(keep, names(state))]
+  out$version <- 2L
+  out$etaIndex <- if (is.null(etaIndex)) seq_len(state$dEta) else
+    as.integer(etaIndex)
+  out$variableName <- variableName
+  out$fingerprint <- copulaFingerprint(state$vine, state$d, state$margins)
+  class(out) <- c("saemixCopulaSnapshot", "list")
+  out
+}
+
+copulaPostprocessGuard <- function(object, feature) {
+  if (is.null(attr(object, "saemix.copula", exact = TRUE)))
+    return(invisible(TRUE))
+  stop(feature, " assumes Gaussian random effects; use the copula-aware method",
+    call. = FALSE)
+}
+
+copulaPadFlat <- function(vine, d) {
+  edges <- unlist(vine$pair_copulas, recursive = FALSE)
+  full <- d * (d - 1L) / 2L
+  if (length(edges) < full)
+    edges <- c(edges, rep(list(rvinecopulib::bicop_dist("indep")),
+      full - length(edges)))
+  edges
+}
+
+copulaFingerprint <- function(vine, d, margins = NULL) {
+  edges <- copulaPadFlat(vine, d)
+  answer <- list(structure = vine$structure,
+    truncLvl = as.integer(vine$structure$trunc_lvl),
+    varTypes = as.character(vine$var_types),
+    family = vapply(edges, `[[`, character(1), "family"),
+    rotation = vapply(edges, `[[`, numeric(1), "rotation"),
+    npar = vapply(edges, function(edge) length(edge$parameters), integer(1)))
+  if (!is.null(margins)) {
+    answer$marginName <- unname(vapply(margins, `[[`, character(1), "name"))
+    answer$marginType <- unname(vapply(margins, `[[`, character(1), "type"))
+    answer$marginFree <- unname(lapply(margins, `[[`, "free"))
+    answer$marginRoles <- unname(lapply(margins, `[[`, "roles"))
+    answer$marginClass <- unname(vapply(margins,
+      function(margin) class(margin)[1L], character(1)))
+  }
+  answer
+}
+
+copulaAssertFrozen <- function(vine = .cop$vine) {
+  current <- copulaFingerprint(vine, .cop$d, .cop$margins)
+  if (!identical(current, .cop$fingerprint))
+    stop("fixed population model changed during estimation", call. = FALSE)
+  invisible(TRUE)
+}
+
+copulaLocation <- function(X, beta, locMap) sweep(X, 2L, beta, "*") %*% locMap
+
+copulaUeta <- function(eta) {
+  eta <- as.matrix(eta)
+  if (ncol(eta) != .cop$d)
+    stop("population state and sampled coordinates have different dimensions")
+  -copulaGaussianFremLogPrior(eta, .cop$vine, .cop$margins, .cop$dEta,
+    "joint")
+}
+
+copulaRandEta <- function(n, conditioning = NULL) {
+  if (.cop$dConditioning > 0L) {
+    conditioning <- as.matrix(conditioning)
+    if (nrow(conditioning) != n || ncol(conditioning) != .cop$dConditioning)
+      stop("conditioning rows do not match the requested population draws")
+    return(copulaGaussianFremRandEta(
+      conditioning, .cop$vine, .cop$margins, .cop$dEta))
+  }
+  uniforms <- rvinecopulib::rvinecop(n, .cop$vine)
+  copulaMarginsQuantile(uniforms, .cop$margins)
+}
+
+populationRandPhi <- function(object, predictor) {
+  state <- copulaGet(object)
+  predictor <- as.matrix(predictor)
+  if (state$dConditioning > 0L)
+    stop("joint FREM simulation requires explicit conditioning covariates")
+  uniforms <- rvinecopulib::rvinecop(nrow(predictor), state$vine)
+  predictor + copulaMarginsQuantile(uniforms, state$margins)
 }
 
 copulaOmega <- function() {
-  R <- copulaImpliedCor()
-  diag(.cop$sd) %*% R %*% diag(.cop$sd)
+  correlation <- copulaGaussianRvineCor(.cop$vine, .cop$d)
+  scale <- copulaMarginScales(.cop$margins)[seq_len(.cop$dEta)]
+  correlation <- correlation[seq_len(.cop$dEta), seq_len(.cop$dEta),
+    drop = FALSE]
+  diag(scale, .cop$dEta) %*% correlation %*% diag(scale, .cop$dEta)
 }
 
-## ---- SA particle pool: Delyon eq. (6) with a weighted empirical measure -----
-## poolW carries the stochastic-approximation forgetting factor; a draw enters
-## with weight gamma_k/nchains and every older draw is scaled by (1 - gamma_k).
-copulaPoolUpdate <- function(etaM, gamma, nchains) {
-  .cop$curEta <- etaM
-  if (identical(.cop$mode, "sa")) return(invisible(NULL))   # SA mode keeps no pool
-  n <- nrow(etaM)
-  wNew <- rep(gamma / nchains, n)
-  if (is.null(.cop$poolEta)) {
-    .cop$poolEta <- etaM; .cop$poolW <- wNew
-  } else {
-    .cop$poolEta <- rbind(.cop$poolEta * 1, etaM)
-    .cop$poolW <- c(.cop$poolW * (1 - gamma), wNew)
-  }
-  ## prune negligible particles and cap the pool
-  keep <- .cop$poolW > max(.cop$poolW) * 1e-6
-  if (sum(keep) > .cop$poolMax * n) {
-    ord <- order(.cop$poolW, decreasing = TRUE)[seq_len(.cop$poolMax * n)]
-    keep <- seq_along(.cop$poolW) %in% ord
-  }
-  .cop$poolEta <- .cop$poolEta[keep, , drop = FALSE]
-  .cop$poolW <- .cop$poolW[keep]
-  invisible(NULL)
+copulaIsNestedGaussian <- function(vine, margins) {
+  copulaIsFullGaussianVine(vine, length(margins)) &&
+    all(vapply(margins, function(margin) identical(margin$name, "normal"),
+      logical(1)))
 }
 
-## ---- M-step (IFM): margins by weighted moments, copula by weighted MLE ------
-etaVineFromFlat <- function(flat, d, structure) {
-  k <- 1L; pcs <- vector("list", d - 1)
-  for (t in seq_len(d - 1)) {
-    ed <- vector("list", d - t)
-    for (e in seq_len(d - t)) { ed[[e]] <- flat[[k]]; k <- k + 1L }
-    pcs[[t]] <- ed
-  }
-  rvinecopulib::vinecop_dist(pcs, structure)
+copulaNestedGaussianLogDensity <- function(eta, vine, margins) {
+  if (!copulaIsNestedGaussian(vine, margins)) return(NULL)
+  scale <- vapply(margins, function(margin)
+    margin$parameters[["sd"]], numeric(1))
+  correlation <- copulaGaussianRvineCor(vine, length(margins))
+  covariance <- diag(scale) %*% correlation %*% diag(scale)
+  copulaGaussianLogDensity(as.matrix(eta), covariance)
 }
 
-
-## ---- joint (MLE) M-step helpers --------------------------------------------
-##
-## The IFM M-step solves M_j = 0 for sd_j (the Gaussian-marginal score) and
-## drops D_j, the copula's dependence on sd through u = pnorm(eta/sd).  E[D_j]
-## = 0 at the truth, so IFM is consistent -- but it solves an unbiased
-## ESTIMATING EQUATION, not the score, so the fixed point is not the MLE.
-## Consequences: no EM ascent guarantee, and standard errors / likelihood-ratio
-## tests from the observed information are invalid (they need the sandwich).
-##
-## mode = "joint" maximises Q over (sd, pair-copula taus) TOGETHER, restoring
-## MLE status for the copula model.  Families and structure stay frozen after
-## the first selection, so Q is a fixed function of a fixed-length parameter
-## vector -- which is also what Delyon's (M1)/(M5) require.
-
-copulaPadFlat <- function(vine, d) {
-  f <- unlist(vine$pair_copulas, recursive = FALSE)
-  nFull <- d * (d - 1) / 2
-  if (length(f) < nFull)
-    f <- c(f, rep(list(rvinecopulib::bicop_dist("indep")), nFull - length(f)))
-  f
+copulaLogPrior <- function(E, vine, sdv = NULL, cores = 1L, margins = NULL,
+                           numericalPolicy = "exact", ...) {
+  if (!identical(numericalPolicy, "exact"))
+    stop("only exact likelihood evaluation is supported")
+  if (is.null(margins)) margins <- lapply(sdv, copulaMarginNormal)
+  copulaGaussianFremLogPrior(as.matrix(E), vine, margins,
+    ncol(as.matrix(E)), "joint")
 }
 
-## Admissible Kendall-tau range for a fixed family+rotation, unconstrained.
-## Archimedean families are one-sided: rotation 0/180 -> tau > 0, 90/270 -> < 0.
-copulaTauTwoSided <- function(fam) fam %in% c("gaussian", "frank", "t", "indep")
-copulaTauToX <- function(tau, fam, rot) {
-  if (copulaTauTwoSided(fam)) return(atanh(max(min(tau / 0.98, 0.999), -0.999)))
-  stats::qlogis(max(min(abs(tau) / 0.95, 0.999), 0.001))
+saemixTraceReset <- function() {
+  .trc$L <- list()
+  options(saemixTrace = TRUE)
 }
-copulaXToTau <- function(x, fam, rot) {
-  if (copulaTauTwoSided(fam)) return(0.98 * tanh(x))
-  (if (rot %in% c(90, 270)) -1 else 1) * 0.95 * stats::plogis(x)
-}
-
-copulaBicopFromTau <- function(tmpl, tau) {
-  if (tmpl$family == "indep") return(tmpl)
-  if (tmpl$family == "t")
-    return(rvinecopulib::bicop_dist("t", rotation = tmpl$rotation,
-             parameters = c(sin(pi * tau / 2), tmpl$parameters[2])))
-  rvinecopulib::bicop_dist(tmpl$family, rotation = tmpl$rotation,
-                           parameters = rvinecopulib::ktau_to_par(tmpl, tau))
-}
-
-copulaLogPrior <- function(E, vine, sdv) {
-  z <- sweep(E, 2, sdv, "/")
-  u <- pmin(pmax(pnorm(z), 1e-10), 1 - 1e-10)
-  rowSums(dnorm(z, log = TRUE)) - sum(log(sdv)) +
-    log(pmax(rvinecopulib::dvinecop(u, vine), 1e-300))
-}
-
-## Warm-started, limited-iteration joint maximisation.  An increase in Q is all
-## a generalised-EM step needs; iterating across SAEM iterations converges to
-## the maximiser (Delyon et al. 1999, Sec. 8.1).
-## `withMu = TRUE` adds a location block.  The draws E are etas relative to the
-## CURRENT mean.phi, so moving it to mean.phi + delta relabels the same phi as
-## eta = E - delta: the observation term is invariant and delta can be optimised
-## on the same weighted draws.  Without this block mu still solves E[eta] = 0,
-## another unbiased estimating equation rather than the score, and the fixed
-## point is not the MLE.
-copulaMaximiseJoint <- function(E, w, sd0, vine0, d, maxit = 40L, withMu = TRUE) {
-  flat <- copulaPadFlat(vine0, d)
-  fams <- vapply(flat, function(b) b$family, character(1))
-  rots <- vapply(flat, function(b) b$rotation, numeric(1))
-  free <- which(fams != "indep")
-  tau0 <- vapply(seq_along(flat), function(i)
-    if (fams[i] == "indep") 0 else rvinecopulib::par_to_ktau(flat[[i]]), numeric(1))
-  build <- function(tt) {
-    fl <- lapply(seq_along(flat), function(i) copulaBicopFromTau(flat[[i]], tt[i]))
-    k <- 1L; pcs <- vector("list", d - 1)
-    for (t in seq_len(d - 1)) {
-      ed <- vector("list", d - t)
-      for (e in seq_len(d - t)) { ed[[e]] <- fl[[k]]; k <- k + 1L }
-      pcs[[t]] <- ed
-    }
-    rvinecopulib::vinecop_dist(pcs, vine0$structure)
-  }
-  if (!length(free)) return(list(sd = sd0, vine = vine0, delta = rep(0, d), conv = NA_integer_))
-  nMu <- if (isTRUE(withMu)) d else 0L
-  par0 <- c(rep(0, nMu), log(sd0), vapply(free, function(i)
-    copulaTauToX(tau0[i], fams[i], rots[i]), numeric(1)))
-  negQ <- function(pv) {
-    delta <- if (nMu) pv[seq_len(nMu)] else rep(0, d)
-    sdv <- exp(pv[nMu + seq_len(d)])
-    if (any(!is.finite(delta)) || any(!is.finite(sdv)) ||
-        any(sdv < 1e-6) || any(sdv > 1e3)) return(1e10)
-    tt <- tau0
-    tt[free] <- vapply(seq_along(free), function(k)
-      copulaXToTau(pv[nMu + d + k], fams[free[k]], rots[free[k]]), numeric(1))
-    v <- try(build(tt), silent = TRUE)
-    if (inherits(v, "try-error")) return(1e10)
-    val <- -sum(w * copulaLogPrior(sweep(E, 2, delta, "-"), v, sdv))
-    if (!is.finite(val)) 1e10 else val
-  }
-  base <- negQ(par0)
-  op <- try(stats::optim(par0, negQ, method = "BFGS", control = list(maxit = maxit)),
-            silent = TRUE)
-  if (inherits(op, "try-error") || !is.finite(op$value) || op$value >= base)
-    return(list(sd = sd0, vine = vine0, delta = rep(0, d), conv = -1L))
-  tt <- tau0
-  tt[free] <- vapply(seq_along(free), function(k)
-    copulaXToTau(op$par[nMu + d + k], fams[free[k]], rots[free[k]]), numeric(1))
-  list(sd = exp(op$par[nMu + seq_len(d)]), vine = build(tt),
-       delta = if (nMu) op$par[seq_len(nMu)] else rep(0, d),
-       conv = op$convergence)
-}
-
-copulaMstep <- function(kiter, nbiterSa = 0L, alpha1Sa = 1, sdSS = NULL, gamma = 1) {
-  if (is.null(.cop$curEta)) return(invisible(NULL))
-  if (kiter < .cop$fitFrom) return(invisible(NULL))
-  if (kiter %% .cop$refitEvery != 0L) return(invisible(NULL))
-  if (identical(.cop$mode, "joint")) {
-    if (is.null(.cop$poolEta)) return(invisible(NULL))
-    E <- .cop$poolEta; w <- .cop$poolW / sum(.cop$poolW)
-    if (is.null(.cop$famFixed) && !isTRUE(.cop$freezeVine)) {
-      u0 <- pmin(pmax(pnorm(sweep(E, 2, .cop$sd, "/")), 1e-6), 1 - 1e-6)
-      fs0 <- if (is.null(.cop$familySet)) "parametric" else .cop$familySet
-      f0 <- try(rvinecopulib::vinecop(u0, structure = .cop$vine$structure,
-                                      family_set = fs0, weights = w * length(w),
-                                      selcrit = "aic", trunc_lvl = .cop$truncLvl),
-                silent = TRUE)
-      if (!inherits(f0, "try-error")) {
-        .cop$vine <- f0
-        .cop$famFixed <- unique(vapply(unlist(f0$pair_copulas, recursive = FALSE),
-                                       function(b) b$family, character(1)))
-      }
-    }
-    jm <- copulaMaximiseJoint(E, w, .cop$sd, .cop$vine, .cop$d,
-            maxit = if (is.null(.cop$jointMaxit)) 40L else .cop$jointMaxit)
-    sdNew <- if (isTRUE(.cop$freezeSd)) .cop$sd else jm$sd
-    if (kiter <= nbiterSa && !is.null(.cop$sdPrev))
-      sdNew <- pmax(sdNew, .cop$sdPrev * sqrt(alpha1Sa))
-    .cop$sdPrev <- sdNew; .cop$sd <- sdNew
-    if (!isTRUE(.cop$freezeVine)) .cop$vine <- jm$vine
-    .cop$delta <- jm$delta
-    if (isTRUE(.cop$verbose))
-      .cop$trace[[length(.cop$trace) + 1L]] <- list(
-        kiter = kiter, sd = sdNew, npool = nrow(E), conv = jm$conv,
-        tau = vapply(copulaPadFlat(.cop$vine, .cop$d), function(b)
-          if (b$family == "indep") 0 else rvinecopulib::par_to_ktau(b), numeric(1)),
-        fam = vapply(copulaPadFlat(.cop$vine, .cop$d), function(b) b$family, character(1)))
-    return(invisible(NULL))
-  }
-  if (identical(.cop$mode, "sa")) {
-    E <- .cop$curEta
-    w <- rep(1 / nrow(E), nrow(E))
-  } else {
-    if (is.null(.cop$poolEta)) return(invisible(NULL))
-    E <- .cop$poolEta
-    w <- .cop$poolW / sum(.cop$poolW)
-  }
-
-  ## block 1: marginal SDs (exact maximiser of the Gaussian marginal term;
-  ## ignores the copula term's sd dependence -- this is the IFM approximation)
-  ## The Gaussian margins STILL have an exact sufficient statistic even when the
-  ## copula does not, so take sd from saemix's own SA-accumulated second moment
-  ## rather than from the truncated pool.  Only the copula term needs the pool.
-  sdNew <- if (isTRUE(.cop$freezeSd)) .cop$sd
-           else if (isTRUE(.cop$sdFromSS) && !is.null(sdSS)) sdSS
-           else sqrt(colSums(w * E^2))
-  ## Simulated annealing, same rule saemix applies to diag(omega): during
-  ## burn-in a variance may fall by at most a factor alpha1.sa per iteration.
-  ## This is LOAD-BEARING, not cosmetic.  Without it a weakly identified eta
-  ## (here V2) collapses: a tighter prior shrinks its posterior draws, which
-  ## shrinks sd, which tightens the prior -- and the copula absorbs the lost
-  ## marginal scale as near-perfect dependence (tau -> 0.84, implied rho 0.91).
-  ## The vine parametrisation makes this worse than the plain covariance one,
-  ## because the copula is fitted on normal SCORES and is therefore invariant to
-  ## the marginal scale it is competing with.
-  if (kiter <= nbiterSa && !is.null(.cop$sdPrev))
-    sdNew <- pmax(sdNew, .cop$sdPrev * sqrt(alpha1Sa))
-  .cop$sdPrev <- sdNew
-  .cop$sd <- sdNew
-
-  ## block 2: pair-copula parameters on the pinned structure
-  u <- pnorm(sweep(E, 2, sdNew, "/"))
-  u <- pmin(pmax(u, 1e-6), 1 - 1e-6)
-  fs <- if (is.null(.cop$familySet)) unique(vapply(
-          unlist(.cop$vine$pair_copulas, recursive = FALSE),
-          function(b) b$family, character(1))) else .cop$familySet
-  if (!isTRUE(.cop$freezeVine)) {
-    if (identical(.cop$mode, "sa")) {
-      ## SA-on-parameter: fit the vine to the CURRENT draws only, then take a
-      ## Robbins-Monro step on the pair-copula parameters in Kendall-tau space.
-      ## No pool, no truncation, O(1) memory -- the same optimise-then-damp
-      ## pattern saemix already uses for the residual-error parameters.
-      ## Families are selected once (at fitFrom) and then held, so that tau is
-      ## being averaged within a fixed model rather than across changing ones.
-      cur <- .cop$curEta
-      uc <- pnorm(sweep(cur, 2, sdNew, "/"))
-      uc <- pmin(pmax(uc, 1e-6), 1 - 1e-6)
-      fsUse <- if (is.null(.cop$famFixed)) fs else .cop$famFixed
-      fit <- try(rvinecopulib::vinecop(uc, structure = .cop$vine$structure,
-                                       family_set = fsUse, selcrit = "aic",
-                                       trunc_lvl = .cop$truncLvl), silent = TRUE)
-      if (!inherits(fit, "try-error")) {
-        if (is.null(.cop$famFixed))
-          .cop$famFixed <- unique(vapply(unlist(fit$pair_copulas, recursive = FALSE),
-                                         function(b) b$family, character(1)))
-        ## A truncated fit returns fewer trees than the full vine; pad the
-        ## missing higher trees with independence so the flat edge list keeps
-        ## its canonical length and order.
-        padFlat <- function(v) {
-          f <- unlist(v$pair_copulas, recursive = FALSE)
-          nFull <- .cop$d * (.cop$d - 1) / 2
-          if (length(f) < nFull)
-            f <- c(f, rep(list(rvinecopulib::bicop_dist("indep")), nFull - length(f)))
-          f
-        }
-        old <- padFlat(.cop$vine)
-        new <- padFlat(fit)
-        blended <- lapply(seq_along(new), function(i) {
-          tOld <- if (old[[i]]$family == "indep") 0 else rvinecopulib::par_to_ktau(old[[i]])
-          tNew <- if (new[[i]]$family == "indep") 0 else rvinecopulib::par_to_ktau(new[[i]])
-          tt <- tOld + gamma * (tNew - tOld)
-          b <- new[[i]]
-          if (b$family == "indep") return(b)
-          tt <- sign(tt) * min(abs(tt), 0.95)
-          rvinecopulib::bicop_dist(b$family, rotation = b$rotation,
-                                   parameters = rvinecopulib::ktau_to_par(b, tt))
-        })
-        .cop$vine <- etaVineFromFlat(blended, .cop$d, .cop$vine$structure)
-      }
-    } else {
-      ## Freeze families after the first selection, exactly as mode="sa" does.
-      ## Re-selecting families at every refit changes the objective between
-      ## iterations, so there is no fixed target for the algorithm to converge
-      ## to -- the SA recursion is then chasing a moving function.
-      fsUse <- if (is.null(.cop$famFixed)) fs else .cop$famFixed
-      fit <- try(rvinecopulib::vinecop(u, structure = .cop$vine$structure,
-                                       family_set = fsUse, weights = w * length(w),
-                                       selcrit = "aic", trunc_lvl = .cop$truncLvl),
-                 silent = TRUE)
-      if (!inherits(fit, "try-error")) {
-        if (is.null(.cop$famFixed))
-          .cop$famFixed <- unique(vapply(unlist(fit$pair_copulas, recursive = FALSE),
-                                         function(b) b$family, character(1)))
-        .cop$vine <- fit
-      }
-    }
-  }
-  if (isTRUE(.cop$verbose))
-    .cop$trace[[length(.cop$trace) + 1L]] <- list(
-      kiter = kiter, sd = sdNew, npool = nrow(E),
-      tau = vapply(unlist(.cop$vine$pair_copulas, recursive = FALSE),
-                   function(b) if (b$family == "indep") 0 else
-                     rvinecopulib::par_to_ktau(b), numeric(1)),
-      fam = vapply(unlist(.cop$vine$pair_copulas, recursive = FALSE),
-                   function(b) b$family, character(1)))
-  invisible(NULL)
-}
-
-## Extra per-iteration diagnostics, only when verbose.  etaMean is the smoking
-## gun for a mean/eta ridge: it must stay at 0.
-copulaDiag <- function(kiter, betas, etaMean, pres, gamma) {
-  if (!isTRUE(.cop$verbose)) return(invisible(NULL))
-  n <- length(.cop$diag) + 1L
-  .cop$diag[[n]] <- list(kiter = kiter, betas = betas, etaMean = etaMean,
-                         pres = pres, gamma = gamma, sd = .cop$sd)
-  invisible(NULL)
-}
-
-## Path-agnostic per-iteration trace, so the copula and stock paths can be
-## compared iteration by iteration under the same seed.
-.trc <- new.env(parent = emptyenv())
-saemixTraceReset <- function() { .trc$L <- list(); options(saemixTrace = TRUE) }
 saemixTraceGet <- function() .trc$L
 .saemixTracePush <- function(kiter, betas, omdiag, pres, gamma, statrese) {
   .trc$L[[length(.trc$L) + 1L]] <- list(kiter = kiter, betas = betas,
     omdiag = omdiag, pres = pres, gamma = gamma, statrese = statrese)
-  invisible(NULL)
 }

@@ -84,6 +84,7 @@
 #' 
 #' @export fim.saemix
 fim.saemix<-function(saemixObject) {
+	copulaPostprocessGuard(saemixObject, "fim.saemix")
   # Estimate the Fisher Information Matrix and the s.e. of the estimated parameters  
   saemix.model<-saemixObject["model"]
   saemix.data<-saemixObject["data"]

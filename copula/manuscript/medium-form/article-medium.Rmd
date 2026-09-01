@@ -1,0 +1,1021 @@
+---
+title: "Flexible-margin Gaussian-copula full random-effects models: likelihood-based estimation by stochastic approximation"
+author: "H. van de Beek$^{1}$"
+abstract: |
+  Full random-effects modelling (FREM) jointly describes individual parameters
+  and covariates using a multivariate Normal population distribution. We extend
+  FREM by combining Gaussian dependence with prespecified continuous marginal
+  distributions for parameter random effects and continuous or ordered
+  categorical marginal distributions for covariates. The model reduces to
+  Gaussian FREM when all margins are Normal and permits missing covariates.
+  We derive the observed-data likelihood and estimate population locations,
+  marginal-distribution parameters, dependence parameters and residual error
+  jointly by controlled-MCMC stochastic approximation. The fitted conditional
+  model has an exact conventional FFEM representation when parameter margins
+  are Normal and an exact conditional generative representation otherwise.
+  In 400 simulated nonlinear mixed-effects datasets, structural-parameter bias
+  remained within 0.47%. Relative to Gaussian FREM, mean differences in
+  observed log likelihood were 4.30--9.41 under non-Gaussian data-generating
+  distributions and -0.06 under a Gaussian data-generating distribution. Among
+  subjects above the 95th percentile of a Gamma-distributed covariate, flexible
+  margins reduced the log-scale RMSE of VPC quantiles by 54%. These results
+  indicate that marginal-distribution
+  assumptions can materially affect conditional prediction while Gaussian
+  FREM remains available as a special case.
+output:
+  pdf_document:
+    number_sections: false
+    keep_tex: true
+    citation_package: natbib
+bibliography: ../references.bib
+biblio-style: unsrtnat
+natbiboptions: numbers,square
+link-citations: true
+geometry: margin=0.9in
+fontsize: 10pt
+header-includes:
+  - \usepackage{amsmath,amssymb,booktabs,float,etoolbox}
+  - \usepackage[T1]{fontenc}
+  - \AtBeginEnvironment{thebibliography}{\scriptsize\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+  - \newcommand{\R}{\mathbb R}
+---
+
+**Keywords:** nonlinear mixed-effects model; full random-effects model;
+Gaussian copula; stochastic approximation; marginal likelihood; covariates
+
+# INTRODUCTION
+
+Covariate models describe how patient characteristics contribute to variability
+in individual model parameters and predictions. Full random-effects modelling
+(FREM) includes a prespecified set of covariates as additional random effects
+and estimates their joint covariance with the parameter random effects
+[@yngman2022]. Covariate-effect coefficients and unexplained parameter
+variability can then be calculated for any subset of the included covariates
+from a single estimation. This avoids repeated estimation of separate reduced
+covariate models and allows missing covariates to be integrated over in the
+likelihood [@nyberg2024; @jonsson2024].
+
+Standard FREM assumes that the combined parameter and covariate random effects
+are multivariate Normal. For covariates observed with negligible error, this
+working model can estimate means and covariances accurately under some
+non-Normal covariate distributions [@yngman2022]. It nevertheless specifies the
+entire population distribution, including marginal shape and conditional tail
+behaviour. These features are relevant when the fitted model is used for
+conditional prediction, simulation of virtual populations, integration over
+missing covariates, or extrapolation to sparsely represented covariate values.
+
+A copula permits the marginal distributions to be specified separately from
+their dependence [@sklar1959; @joe1996]. We extend FREM by combining a Gaussian
+copula with prespecified continuous margins for parameter random effects and
+continuous or ordered categorical margins for covariates. The multivariate
+Normal FREM model is recovered when all margins are Normal. Estimation is based
+on the joint observed-data likelihood of the responses and recorded covariates,
+with individual parameters and missing covariates treated as unobserved data.
+
+The objectives of this work were to define the flexible-margin FREM model,
+derive its observed-data likelihood and an exact FFEM translation, develop a
+likelihood-based stochastic-approximation estimator, and evaluate parameter
+recovery and conditional prediction in a simulation study.
+
+# METHODS
+
+## FREM model
+
+For subject $i$ at design point $x_{ij}$, the nonlinear mixed-effects
+observation model is
+
+\[
+ y_{ij}=f(\psi_i,x_{ij})+g(\psi_i,\sigma,x_{ij})\epsilon_{ij},
+ \qquad \epsilon_{ij}\sim N(0,1),                          \tag{1}
+\]
+
+where $\psi_i$ is the vector of individual model parameters and $\sigma$
+contains the residual-error parameters. On the transformed additive scale,
+
+\[
+ \phi_i=h(\psi_i)=C_i\mu+\eta_{\mathrm{par},i},             \tag{2}
+\]
+
+where $C_i$ is the fixed-effect design matrix, $\mu$ is the vector of
+population parameters, and $\eta_{\mathrm{par},i}$ is the parameter random
+effect. The lowercase symbol $c_i$ denotes the FREM covariate vector and
+distinguishes it from the design matrix $C_i$. An error-free additive FREM
+covariate model is
+
+\[
+ c_i=\mu_c+\eta_{\mathrm{cov},i}.                           \tag{3}
+\]
+
+Here $\eta_{\mathrm{par},i}$ represents total parameter variability (TPV) and
+$\eta_{\mathrm{cov},i}$ is the individual covariate deviation. Standard FREM
+specifies
+
+\[
+ \begin{pmatrix}\eta_{\mathrm{par},i}\\
+                 \eta_{\mathrm{cov},i}\end{pmatrix}
+ \sim N\!\left[0,\Omega_{\mathrm{FREM}}\right],\qquad
+ \Omega_{\mathrm{FREM}}=
+ \begin{pmatrix}
+  \Omega_{\mathrm{par}}&\Omega_{\mathrm{par,cov}}\\
+  \Omega_{\mathrm{cov,par}}&\Omega_{\mathrm{cov}}
+ \end{pmatrix}.                                             \tag{4}
+\]
+
+Equation (4) is the standard FREM specification [@yngman2022]. Let
+$\Omega_{\mathrm{par,cov}}\in\R^{p\times q}$ and
+$\Omega_{\mathrm{cov,par}}=\Omega_{\mathrm{par,cov}}^{\mathsf T}$.
+The covariate-effect matrix and unexplained parameter variability (UPV) are
+
+\[
+ B=\Omega_{\mathrm{par,cov}}\Omega_{\mathrm{cov}}^{-1},
+ \qquad
+ \Omega'_{\mathrm{par}}
+ =\Omega_{\mathrm{par}}-B\Omega_{\mathrm{cov,par}}.        \tag{5}
+\]
+
+Consequently,
+
+\[
+ \eta_{\mathrm{par},i}\mid c_i
+ \sim N\!\left[B(c_i-\mu_c),
+                  \Omega'_{\mathrm{par}}\right].           \tag{6}
+\]
+
+Equations (4)--(6) give the standard Gaussian FREM model, its conditional
+covariate coefficients, and its UPV representation.
+
+## Flexible-margin FREM model
+
+Let $X_i=(\eta_{\mathrm{par},i},c_i)$ contain the $d$ population coordinates.
+For continuous coordinate $j$, write $F_j(\cdot;\alpha_j)$ and
+$f_j(\cdot;\alpha_j)$ for its CDF and density and define
+
+\[
+ \xi_j=\Phi^{-1}\{F_j(x_j;\alpha_j)\}.
+\]
+
+Let $R(\rho)$ be a positive-definite Gaussian-score correlation matrix and let
+$\theta_p=(\alpha,\rho)$ collect the population-distribution parameters. The
+continuous population density is
+
+\[
+ p_{\theta_p}(x)=|R|^{-1/2}
+ \exp\!\left[-\tfrac12\xi^{\mathsf T}(R^{-1}-I)\xi\right]
+ \prod_{j=1}^d f_j(x_j;\alpha_j).                           \tag{7}
+\]
+
+We parameterize $R$ by a fixed regular vine with Gaussian pair copulas; the vine
+structure is not estimated during the stochastic-approximation recursion. When
+all margins are Normal on their modelled scales, (7) reduces
+exactly to the error-free Gaussian FREM population model (2)--(4), with
+$\Omega_{\mathrm{FREM}}$ obtained from the marginal standard deviations and
+$R$. This error-free formulation is the zero-covariate-residual limit of the
+conventional NONMEM/PsN formulation, which uses a small fixed residual variance for covariate
+responses [@yngman2022; @jonsson2024].
+
+Let $\theta=(\mu,\alpha,\rho,\sigma)$ denote the unknown parameter vector.
+Here $\alpha$ contains the parameters of the marginal distributions of
+$\eta_{\mathrm{par}}$ and $c$, including $\mu_c$; $\rho$ parameterizes $R$; and $\sigma$
+contains the residual-error parameters. When all margins are Normal,
+the marginal scale parameters together with $\rho$ are equivalently represented
+by $\operatorname{vec}(\Omega_{\mathrm{FREM}})$; the covariate locations
+$\mu_c$ remain separate.
+
+The corresponding FREM effect summaries live naturally on the latent-score
+scale. Partition $R$ into individual-parameter and covariate blocks. Then
+
+\[
+ B_\xi=R_{\mathrm{par,cov}}R_{\mathrm{cov}}^{-1},\qquad
+ R'_{\mathrm{par}}=R_{\mathrm{par}}-
+ B_\xi R_{\mathrm{cov,par}},                              \tag{7a}
+\]
+
+so that $\xi_{\mathrm{par}}\mid c$ is Normal with mean
+$B_\xi\xi_{\mathrm{cov}}(c)$ and covariance $R'_{\mathrm{par}}$. The fitted
+marginal quantile maps transform this conditional law back to the native
+parameter scale. Under all-Normal margins, let $D_{\mathrm{par}}$ and
+$D_{\mathrm{cov}}$ be diagonal matrices of marginal standard deviations. Then
+$B=D_{\mathrm{par}}B_\xi D_{\mathrm{cov}}^{-1}$ and
+$\Omega'_{\mathrm{par}}=D_{\mathrm{par}}R'_{\mathrm{par}}
+D_{\mathrm{par}}$, which recovers (5). Under non-Gaussian parameter margins the
+native-scale conditional mean need not be linear. In that case, $B_\xi$,
+$R'_{\mathrm{par}}$ and the marginal quantile functions jointly determine the
+conditional distribution.
+
+## Maximum likelihood estimation
+
+For the Gaussian FREM model, the complete-data likelihood has the curved
+exponential-family representation used by standard SAEM,
+
+\[
+ \log p_\theta(Y,Z)=-\psi(\theta)+
+ \langle S(Y,Z),\varphi(\theta)\rangle,
+\]
+
+where $S(Y,Z)$ is a parameter-independent finite-dimensional sufficient
+statistic. Standard SAEM recursively averages $S(Y,Z)$ and performs the M-step
+from that finite vector [@delyon1999; @kuhn2005].
+
+In (7), a marginal parameter $\alpha_j$ enters both
+$\log f_j(x_j;\alpha_j)$ and the transformed value
+$\xi_j=\Phi^{-1}\{F_j(x_j;\alpha_j)\}$ inside the copula quadratic form.
+Marginal and dependence parameters are therefore coupled through nonlinear
+functions of the latent data, and a parameter-independent finite statistic
+$S(Y,Z)$ is not generally available. The observed-data likelihood and the EM
+identity remain valid, but the usual finite-statistic SAEM recursion and its
+convergence theorem cannot simply be carried over. The likelihood score instead
+provides a stochastic-approximation target through Delyon et al. equation (74).
+When all margins are Normal, the ordinary Gaussian FREM finite-statistic
+representation is recovered.
+
+### Observed-data likelihood
+
+Let $O_i=(Y_i,c_{i,\mathrm{obs}})$ and let $Z_i$ collect individual parameters
+and missing covariates. For categorical covariates and continuous margins with
+parameter-dependent support, $Z_i$ additionally contains the fixed-support
+unit-interval variables defined below. With a fixed mixed Lebesgue/counting
+measure $\lambda$, define the complete-data likelihood $f_i$ and observed-data
+likelihood $g_i$ by
+
+\[
+ g_i(\theta)=\int f_i(z_i;\theta)\,\lambda(dz_i),\qquad
+ \ell(\theta)=\sum_{i=1}^N\log g_i(\theta).                 \tag{8}
+\]
+
+The dependence of $f_i$ and $g_i$ on $O_i$ is implicit, as in Delyon et al.;
+$Z_i$ denotes the missing or augmented data [@delyon1999]. Consequently, the
+likelihood contribution is based on the joint density
+$p_\theta(Y_i,c_{i,\mathrm{obs}})$. Individual effects and missing covariates
+are integrated out rather than replaced by point estimates. The analysis
+conditions on the recorded missingness pattern and assumes that the
+covariate-missingness mechanism is ignorable.
+
+When all covariates are observed, its subject contribution has the exact
+factorization
+
+\[
+ \log p_\theta(Y_i,c_i)
+ =\log p_{\theta_p}(c_i)
+  +\log p_\theta(Y_i\mid c_i).                             \tag{8a}
+\]
+
+Thus a difference in joint log likelihood may reflect differences in the
+fitted covariate density, the conditional response likelihood, or both. This
+factorization does not alter the estimation objective in (8).
+
+When the continuous margins are proper and absolutely continuous, the required
+fixed-support representations exist, the categorical probability vectors are
+proper, $R$ is positive definite, and the response density is proper, (7)
+defines a probability distribution and $g_i(\theta)$ in (8) is a valid
+observed-data likelihood contribution. This follows from a componentwise
+probability-integral transformation: continuous Jacobians transform (7) to a
+$N_d(0,R)$ density, categorical cells partition their latent Gaussian
+coordinates, and the fixed-support representations put moving boundaries on
+fixed unit intervals. Appendix A gives the detailed normalization argument.
+
+### Stochastic approximation of the likelihood score
+
+Work in unconstrained internal coordinates $\vartheta$, with native parameters
+$\theta=\tau(\vartheta)$. Log, logit and hyperspherical transformations enforce
+positive scales, probabilities and a positive-definite $R$. Write
+$\widetilde f_i(z;\vartheta)=f_i\{z;\tau(\vartheta)\}$ and
+$\widetilde g_i(\vartheta)=g_i\{\tau(\vartheta)\}$. At iteration $k$,
+controlled Markov kernels invariant for the current individual conditional law
+advance $m$ chains per subject. The estimated complete score is
+
+\[
+ \widehat H_{k+1}=\frac1{mN}\sum_{r=1}^m\sum_{i=1}^N
+ \nabla_\vartheta\log f_i
+       (Z_{i,k+1}^{(r)};\tau(\vartheta_k)),                  \tag{9}
+\]
+
+and the parameter update is
+
+\[
+ \vartheta_{k+1}=\operatorname{Proj}_K
+ \{\vartheta_k+\gamma_{k+1}A_k\widehat H_{k+1}\}.         \tag{10}
+\]
+
+Adaptation of the positive diagonal metric and proposal scales is restricted to
+a finite initial sequence; these quantities are subsequently held fixed. The
+gain sequence is
+$\gamma_k=\gamma_0(k+k_0)^{-a}$ with $a>3/4$. Marginal families, category
+order, copula structure and all other discrete model choices are specified
+before recursion (10) begins.
+
+Equation (10) is the internal-coordinate, projected, preconditioned and
+multiple-chain extension of Delyon et al. equation (74),
+$\theta_k=\theta_{k-1}+\gamma_k\partial_\theta
+\log f(Z_k;\theta_{k-1})$. The coordinate transformations and fixed
+positive-definite metric leave the stationary points unchanged.
+
+Every stochastic move is either an exact conditional draw or a Metropolis-
+Hastings transition with the current individual conditional law as invariant
+distribution. At least one exact conditional-population independence proposal
+is used per iteration. With several categorical covariates, random-walk moves
+that would require a numerical rectangle probability are omitted; the exact
+independence kernel remains. An unadjusted approximate kernel would generally
+have a different invariant distribution and hence a different mean field
+[@gruffaz2024].
+
+### Relation to the observed-data likelihood
+
+Provided differentiation can pass through (8), Fisher's identity gives
+
+\[
+ E_\vartheta\{\nabla_\vartheta\log \widetilde f_i(Z_i;\vartheta)\mid O_i\}
+ =\nabla_\vartheta\log \widetilde g_i(\vartheta).           \tag{11}
+\]
+
+For one subject, substitution of the conditional density
+$\widetilde f_i(z;\vartheta)/\widetilde g_i(\vartheta)$ into the expectation
+reduces its numerator to
+$\nabla_\vartheta\int \widetilde f_i(z;\vartheta)\lambda(dz)$.
+The fixed-support representations ensure that $\lambda$ is fixed. Appendix A states the required
+domination conditions and gives the full calculation [@louis1982].
+
+Let $\bar\ell=N^{-1}\ell$. Thus the mean field after finite tuning is
+$A\nabla\bar\ell$. For symmetric positive-definite $A$,
+
+\[
+ \frac{d}{dt}\bar\ell\{\vartheta(t)\}
+ =\nabla\bar\ell(\vartheta)^{\mathsf T}A
+  \nabla\bar\ell(\vartheta)\geq0.                          \tag{12}
+\]
+
+### Convergence
+
+Let $\mathcal L=\{\vartheta:\nabla\bar\ell(\vartheta)=0\}$. Assume:
+
+1. the model, augmentation and dominating measure are fixed, and
+   $\bar\ell$ is continuously differentiable on a neighbourhood of the visited
+   compact interior set;
+2. differentiation under the integral is dominated, category probabilities
+   and eigenvalues of $R$ stay away from zero, and moving-support quantile and
+   response paths have dominated derivatives;
+3. the controlled kernels have unique invariant laws, uniform geometric drift
+   and minorization on the visited compact set, and the kernel and score satisfy
+   the local regularity and Poisson-equation bounds required for Markovian
+   stochastic approximation;
+4. $\gamma_k=\gamma_0(k+k_0)^{-a}$ satisfies the usual summability conditions and the
+   stronger controlled-Markov requirement; the value $a=0.80$ used in the
+   experiments is valid for the stated Lipschitz and second-moment setting;
+5. the metric is eventually fixed and positive definite, numerical score error
+   is gain-weighted summable, and projections, invalid-step backtracking and
+   no-move replacements cease after a finite random time; and
+6. $-\bar\ell$ admits the required coercive Lyapunov extension and critical-
+   value condition on the stabilized tail.
+
+Then controlled-Markov stochastic-approximation results imply
+
+\[
+ d(\vartheta_k,\mathcal L)\longrightarrow0
+ \qquad\text{almost surely}.                               \tag{13}
+\]
+
+The limit set lies in a connected component of $\mathcal L$. If it is contained
+in a neighbourhood with one isolated attracting stationary point, the raw
+iterates converge to that point. This result establishes convergence to the
+stationary set, not convergence to a global maximum. It is distinct from
+Delyon et al. Theorems 5 and 8, which concern finite-statistic SAEM. Appendix B
+maps the assumptions to controlled-Markov results [@andrieu2005; @fort2016].
+
+## Conditional representation and FFEM translation
+
+For a selected covariate subset $S$, let $z_{iS}$ contain the corresponding
+Gaussian scores and calculate $B_{\xi,S}$ and
+$R'_{\mathrm{par},S}$ from the relevant blocks of $R$. If the parameter random-
+effect margins are Normal, the fitted conditional distribution has the exact
+FFEM representation
+
+\[
+ \phi_i=C_i\mu+\beta_{z,S}z_{iS}+\eta'_{iS},\qquad
+ \beta_{z,S}=D_{\mathrm{par}}B_{\xi,S},\qquad
+ \eta'_{iS}\sim N(0,\Omega'_{\mathrm{par},S}),
+\]
+
+where
+$\Omega'_{\mathrm{par},S}=D_{\mathrm{par}}R'_{\mathrm{par},S}
+D_{\mathrm{par}}$. The covariates are fixed inputs in this FFEM; their fitted
+CDFs are used only to calculate $z_{iS}$. If the selected covariate margins are
+also Normal, the transformation reduces to centring and scaling, and the usual
+raw-scale $B_S$ and $\Omega'_{\mathrm{par},S}$ of standard FREM are recovered
+[@yngman2022].
+
+For non-Normal parameter random effects, a conventional additive-Normal FFEM
+is not generally equivalent. Let $Q_\eta$ apply the fitted parameter-margin
+quantile functions componentwise and choose $L_S$ such that
+$L_SL_S^{\mathsf T}=R'_{\mathrm{par},S}$. The exact conditional representation
+is
+
+\[
+ \phi_i=C_i\mu+
+ Q_\eta\!\left[\Phi\!\left\{
+ B_{\xi,S}z_{iS}+L_S\varepsilon_i\right\}\right],
+ \qquad \varepsilon_i\sim N(0,I).
+\]
+
+The covariates remain fixed inputs, but the latent Normal random effects are
+transformed to retain the fitted non-Normal parameter margins. We use
+*distributional FFEM* as shorthand for this exact conditional generative
+representation, not for a conventional additive-Normal FFEM. Ordered
+categorical covariates similarly require their latent-interval mixture rather
+than one deterministic transformed value. The implementation
+exports the linear coefficient and UPV matrices when the conventional FFEM is
+exact; otherwise the fitted conditional model is represented by exact
+conditional quantiles and simulation, without a Normal approximation. The
+translated model represents $p(y\mid c_S)$ and therefore omits the covariate-
+density contribution to the joint FREM likelihood. Appendix A derives the
+Gaussian nested case and both FFEM representations.
+
+## Categorical covariates and parameter-dependent support
+
+For an ordered categorical covariate $j$ with probabilities
+$\pi_{j1},\ldots,\pi_{jK}$, category $k$ corresponds to the latent Gaussian
+interval between cumulative-probability thresholds. Several observed
+categories therefore contribute a joint multivariate-Normal rectangle mass.
+The estimator avoids differentiating this rectangle by introducing
+$V_{ij}\in(0,1)$ and
+
+\[
+ U_{ij}=b_{j,k-1}+V_{ij}\pi_{jk},\qquad
+ b_{jk}=\sum_{r\leq k}\pi_{jr}.                           \tag{14}
+\]
+
+Integrating $V_{ij}$ recovers the category mass. This construction supports any
+finite number of dependent binary, ordinal, or explicitly ordered nominal
+covariates. A permutation-invariant nominal model instead requires a
+multinomial latent-utility construction.
+
+A regular continuous margin whose support depends on $\alpha_j$ uses the
+analogous fixed-percentile representation
+
+\[
+ W_{ij}\in(0,1),\qquad
+ X_{ij}=F_j^{-1}(W_{ij};\alpha_j).                         \tag{15}
+\]
+
+For a parameter coordinate with parameter-dependent support, the complete-data
+score differentiates
+$\phi_{ij}=(C_i\mu)_j+F_j^{-1}(W_{ij};\alpha_j)$ through
+$\psi_i=h^{-1}(\phi_i)$ and the structural response. Missing covariates with
+parameter-dependent support use the same representation.
+Observed native values must remain in the interior of their support on the
+visited parameter set; nonregular endpoint MLEs are outside the stationary-
+interior theory.
+
+## Experiments
+
+The simulation study used four covariate-margin scenarios: Normal/Normal,
+lognormal/Normal, Gamma/Normal, and Weibull/lognormal. Each contained 100
+independently generated datasets with $N=100$, seven intravenous
+one-compartment observations per subject, $V=10$, $CL=3$, and proportional
+residual standard deviation 0.12. The four-dimensional Gaussian copula joined
+two individual parameters and two covariates. Flexible families were
+prespecified to isolate estimator behaviour from family selection. In the
+coordinate order $(\eta_V,\eta_{CL},\mathrm{COV1},\mathrm{COV2})$, the six
+generating Gaussian-score correlations were 0.25, 0.50, 0.10, 0.25, 0.55 and
+0.20. COV1 was $N(70,14^2)$, lognormal with meanlog $\log(70)$ and sdlog 0.24,
+Gamma with shape 7.5 and scale 12, or Weibull with shape 2.3 and scale 78.
+COV2 was $N(90,25^2)$ in the first three scenarios and lognormal with meanlog
+$\log(90)$ and sdlog 0.28 in the fourth. Each fit
+used 1,500 score iterations, one persistent chain per subject, and two moves
+from each of the three invariant kernels per iteration. The gain was
+$0.2(k+30)^{-0.80}$, with score multiplier 0.025, $h_0=10^{-4}$ and 50
+learning iterations. A Gaussian FREM fit supplied only a finite initializer;
+all score-recursion state was restarted. For each dataset, the final score-SA
+and Gaussian-FREM fits were reevaluated by importance sampling with 5,000 draws
+and independent prespecified random-number seeds. A fit was considered
+successful only if it completed, adaptation ended as specified, and no projection, invalid-step
+backtracking, no-move replacement or one-sided numerical difference occurred
+after adaptation.
+
+Because Gamma shape and scale can compensate while retaining the marginal
+mean, a separate direct-MLE experiment used 10,000 independently generated
+Gamma samples at each of $N=50$, 100, 300, 1,000 and 3,000. Full-model Gamma
+estimates were also compared with direct Gamma MLEs on the same $N=100$ and
+$N=300$ datasets.
+
+An additional example was used to evaluate prediction conditional on an
+extreme covariate value. One dataset with $N=300$ was generated from the same
+one-compartment model. C-reactive protein (CRP) followed a Gamma distribution
+with shape 2 and scale 20, albumin followed $N(40,5^2)$, and the Gaussian-score
+correlation between CRP and the clearance random effect was 0.55. Gaussian and
+flexible-margin FREM were fitted with 1,500 iterations. An independent
+validation population was then sampled above the 95th percentile of CRP. Only
+CRP was supplied for prediction; albumin was integrated over its fitted
+conditional distribution. Generating and fitted VPC quantiles were calculated
+from 150,000 virtual subjects using common random numbers. Empirical validation
+quantiles were calculated independently from 1,500 subjects. Predictive error
+was the RMSE of log-transformed 10th, 50th and 90th percentiles over seven time
+points.
+
+# RESULTS
+
+## Re-estimation study
+
+\begin{table}[H]
+\centering
+\caption{Flexible-margin FREM parameter recovery and difference in estimated
+joint observed-data log likelihood relative to Gaussian FREM. Bias is relative
+mean bias across 100 datasets; $\Delta\ell$ is flexible-margin minus Gaussian
+FREM.}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Scenario & $V$ bias (\%) & $CL$ bias (\%) & Residual bias (\%) & $\Delta\ell$\\
+\midrule
+Normal/Normal       &  0.29 & -0.03 &  0.03 & -0.06\\
+lognormal/Normal    & -0.03 & -0.46 & -0.15 &  4.30\\
+Gamma/Normal        &  0.31 &  0.18 & -0.41 &  4.60\\
+Weibull/lognormal   & -0.26 &  0.01 &  0.05 &  9.41\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across scenarios, flexible-margin RMSE was 0.226--0.249 for $V$,
+0.073--0.091 for $CL$, and 0.0033--0.0040 for residual standard deviation.
+The corresponding Gaussian-FREM results were nearly identical: the largest
+difference between methods in mean relative bias was 0.04 percentage points.
+
+Estimates of the marginal-distribution parameters were close to their
+generating values. Mean lognormal sdlog estimates were 0.239 and 0.277 for
+generating values 0.240 and 0.280. Mean Weibull shape and scale estimates were
+2.309 and 78.11 for generating values 2.3 and 78. Mean Gamma shape and scale
+estimates were 7.944 and 11.556 for generating values 7.5 and 12. On the same
+$N=100$ datasets, direct Gamma MLEs were 7.941 and 11.562; mean absolute
+full-model--direct-MLE differences were 0.0065 and 0.0101. Thus the full model
+reproduced the dataset-specific Gamma MLE. Across the six Gaussian-score
+correlations, the maximum absolute scenario-specific mean bias was 0.022 and
+RMSE ranged from 0.066 to 0.110.
+
+The estimated joint observed-data log likelihood was larger for the flexible-
+margin model in 285 of 300 datasets generated with a non-Gaussian margin:
+90 lognormal/Normal, 95 Gamma/Normal and all 100 Weibull/lognormal datasets.
+Under the Gaussian generating model, the mean difference was -0.06 and exactly
+50 of 100 differences were positive, as expected for two numerical estimators
+of the same model.
+
+The covariate-density component accounted for mean log-likelihood differences
+of 4.01, 4.15 and 8.58 in the lognormal/Normal, Gamma/Normal and
+Weibull/lognormal scenarios. The corresponding mean differences in the
+conditional response likelihood were 0.29, 0.45 and 0.83. Thus most of the
+joint-likelihood gain arose from the specified covariate margins; the separate
+predictive evaluation below addresses the effect on conditional prediction.
+
+For each dataset, likelihoods were evaluated by independent importance-sampling
+runs. The quadrature sum of the two reported Monte Carlo standard errors
+averaged 0.29. The compared covariate margins had equal numbers of parameters,
+but the models were non-nested; the reported differences are descriptive rather
+than a formal model comparison. Equation (8a) further shows that a difference
+in the joint log likelihood does not identify the corresponding difference in
+$p(Y\mid c)$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{figures/figure1_reestimation.png}
+\caption{Re-estimation results from 100 independently generated datasets per
+scenario. (A) Mean relative bias and 95\% Monte Carlo confidence intervals for
+the structural and residual-error parameters. (B) Mean decomposition of the
+difference in joint observed-data log likelihood into covariate-density and
+conditional-response components. Open circles and whiskers show the median and
+10th--90th percentiles of the total likelihood difference.}
+\end{figure}
+
+## Predictive evaluation
+
+Both methods recovered the structural and residual-error parameters in the
+additional example: estimates of $V$, $CL$ and residual standard deviation were
+10.16, 3.01 and 0.120 for Gaussian FREM and 10.16, 3.00 and 0.120 for
+flexible-margin FREM. The paired estimated joint log likelihood was -4091.6 and
+-4041.7, respectively. Because the models are non-nested and the joint
+likelihood includes the covariate density, this difference is descriptive.
+
+The fitted conditional clearance relationships are shown in Figure 2. The
+Gaussian-FREM relationship is the exact FFEM transformation implied by its
+fitted Normal CRP margin and covariance matrix. It followed the centre of the
+simulated data but increased too rapidly in the upper CRP tail. The flexible-
+margin FREM transformation remained closer to the generating relationship.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\linewidth]{figures/figure2_conditional_relationship.png}
+\caption{Conditional median clearance as a function of CRP in the simulated
+$N=300$ dataset. Grey points are the true simulated individual clearance
+values, which are latent rather than directly observed in an NLME analysis.
+Lines show the generating conditional median and the relationships obtained
+from Gaussian FREM and flexible-margin FREM after exact FFEM translation. Only
+CRP is conditioned on; albumin is marginalized from the joint distribution.}
+\end{figure}
+
+In the independent high-CRP population, Gaussian FREM underestimated the lower
+response percentile and overestimated the upper response percentile at later
+times. The flexible-margin predictions were closer to the generating
+percentiles throughout the profile. Log-scale VPC RMSE decreased from 0.266 to
+0.123, a reduction of 53.9%. Albumin was not supplied for prediction and was
+integrated out under both fitted joint distributions.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.98\linewidth]{figures/figure3_gamma_tail_vpc.png}
+\caption{Conditional VPC in an independent population above the 95th CRP
+percentile. Grey shading and the black line show the generating 10th--90th
+percentile interval and median. Coloured solid and dashed lines show fitted
+median and 10th/90th percentiles; black points show empirical quantiles in the
+independent validation sample. Only CRP was available for prediction; albumin
+was integrated out. Flexible-margin FREM reduced log-scale VPC RMSE from 0.266
+to 0.123.}
+\end{figure}
+
+## Numerical verification
+
+Independent numerical derivatives agreed with analytical complete-data scores
+to $1.7\times10^{-10}$ for Gamma and Weibull examples and
+$6.5\times10^{-8}$ for a lognormal example. Monte Carlo evaluations of
+Fisher's identity included population parameters $\mu$, marginal parameters,
+dependence parameters and residual error. With two categorical covariates, the
+maximum absolute discrepancy was 0.0062, compared with a maximum Monte Carlo
+standard error of 0.0113. For a parameter-dependent support example, the
+maximum absolute discrepancy was $2.2\times10^{-10}$. Additional numerical
+tests included multiple categorical covariates, centred Uniform and Gamma
+parameter random effects, and missing Uniform covariates.
+
+In the direct Gamma-MLE experiment, mean shape bias decreased from 2.83% at
+$N=100$ to 0.14% at $N=3,000$, and mean scale bias decreased from -0.85% to
+-0.07%; bias in their product remained within 0.05%. Mean absolute
+full-model--direct-MLE differences in shape and scale were 0.0043 and 0.0075
+in the $N=300$ datasets. These results show that the shape--scale displacement
+in the $N=100$ re-estimation study reflected finite-sample Gamma-MLE behaviour
+and simulation-replicate variation rather than score-recursion error.
+
+For Normal parameter and covariate margins, exported raw-scale coefficients and
+UPV covariance agreed with the direct FREM block formulas to less than
+$10^{-12}$. With a Gamma covariate and Normal parameter margins, 100,000 draws
+from the translated FFEM reproduced its analytical conditional means within
+0.003 and covariance elements within 0.002. With a centred Gamma parameter
+margin, analytical conditional quantiles agreed with 150,000 exact conditional
+draws within 0.006. In the fitted CRP example, direct copula-FREM and translated
+FFEM conditional densities were identical to numerical precision, and the
+translated and direct concentration predictions were identical for every
+tested draw.
+
+# DISCUSSION
+
+The proposed extension replaces the multivariate Normal population
+distribution of FREM by a Gaussian-copula distribution with prespecified
+margins; the structural and residual-error models are unchanged. When all
+margins are Normal, the two population distributions coincide. In the
+non-Gaussian simulation scenarios, the flexible-margin model gave larger
+estimated joint log likelihoods while structural-parameter biases remained
+small for both approaches. The principal difference was observed in prediction
+conditional on covariate-tail values. A misspecified marginal CDF changes the
+Gaussian score assigned to a covariate value and therefore changes the fitted
+conditional distribution $p(\eta_{\mathrm{par}}\mid c)$, even when the first two
+moments are estimated accurately.
+
+The conditional representation provides an explicit covariate model for a
+chosen subset. With Normal parameter margins it is a conventional FFEM using
+fixed transformed covariates. With non-Normal parameter margins it retains the
+fitted distribution through a latent-Normal quantile transformation. Direct
+copula-FREM and translated-model predictions are identical when the fitted
+population parameters are held fixed. Re-estimation of the translated model
+instead targets $p(y\mid c_S)$ and does not include the covariate-density term
+from the joint FREM likelihood.
+
+The lack of a general finite sufficient statistic changes the stochastic-
+approximation step but not the likelihood being estimated. Population
+parameters were updated with the controlled-Markov stochastic-gradient
+algorithm described by Delyon et al. Fisher's identity shows that its mean
+field equals the gradient of the specified observed-data log likelihood. The
+convergence result is conditional on the stated stability, drift, regularity
+and critical-value assumptions. The reported numerical diagnostics establish
+that the finite-run stabilization criteria were satisfied, but do not
+establish these asymptotic assumptions.
+
+Model-based copulas have previously been used in pharmacometrics to generate
+virtual populations from covariate distributions [@guo2024]. The present
+extension concerns likelihood-based estimation of the joint parameter-
+covariate distribution within a nonlinear mixed-effects model.
+
+The simulation is exploratory: one PK model, 100 datasets per scenario,
+prespecified families and a Gaussian finite initializer were used. Coverage,
+observed-information standard errors, cold-start sensitivity, automatic family
+learning and powered categorical or moving-support studies remain future work.
+General non-Gaussian R-vines require additional score calculations and are
+outside the fixed Gaussian-copula scope. The continuous margins considered here
+must be proper, differentiable and identifiable with finite score moments on
+the stabilized compact set; parameter random-effect margins are centred and
+require finite variance. These conditions include many non-Gaussian families
+but do not define a distribution-free estimator. Nonregular
+support-boundary MLEs and permutation-invariant nominal variables also require
+separate theory. The current implementation also requires every estimated
+structural parameter to belong to the population-location block; estimated
+fixed-only structural parameters are outside its scope.
+
+# CONCLUSION
+
+Flexible-margin Gaussian-copula FREM separates the specification of marginal
+distributions from the specification of dependence and reduces to Gaussian
+FREM when all margins are Normal. Fisher's identity links the mean field of the
+controlled-MCMC stochastic-gradient algorithm to the observed-data likelihood
+score. In the simulations considered here, structural-parameter recovery was
+similar under both approaches, whereas flexible margins provided larger
+estimated joint log likelihoods and more accurate prediction conditional on
+extreme covariate values under non-Gaussian data-generating distributions. The
+fitted conditional model can be exported without loss to a conventional FFEM
+when parameter margins are Normal and to the exact conditional generative
+representation otherwise.
+
+# DECLARATIONS
+
+Funding, conflicts of interest, author contributions, data availability and
+software availability will be completed before submission.
+
+\appendix
+\small
+
+# Likelihood normalization, Fisher identity and FFEM translation
+
+## Continuous normalization
+
+For fixed $\theta$, the map $x_j\mapsto \xi_j=\Phi^{-1}\{F_j(x_j)\}$ has
+Jacobian $d\xi_j/dx_j=f_j(x_j)/\phi(\xi_j)$. Substitution in (7) therefore gives
+
+\[
+ p_{\theta_p}(x)\,dx
+ =\phi_R(\xi)\,d\xi.
+\]
+
+Integration over $\R^d$ is one. This proves normalization for any proper
+absolutely continuous margins; Gaussian marginal shape is not required.
+
+## Several categorical covariates
+
+For observed category vector $k_{\mathcal D}$, let
+$u_j=b_{j,k_j-1}+v_j\pi_{j,k_j}$ for $j\in\mathcal D$. The augmented mixed
+density is
+
+\[
+ p_\theta^{\rm aug}(x_{\mathcal C},k_{\mathcal D},v_{\mathcal D})
+ =c_R(u)\prod_{j\in\mathcal C}f_j(x_j)
+   \prod_{j\in\mathcal D}\pi_{j,k_j}.                     \tag{A1}
+\]
+
+Since $du_j=\pi_{j,k_j}dv_j$, integrating
+$v_{\mathcal D}\in(0,1)^{|\mathcal D|}$ gives the Gaussian-copula rectangle
+mass for $k_{\mathcal D}$. Summing category vectors tiles the latent unit cube,
+so the masses sum to one. Missing categories add counting-measure summation and
+remain normalized.
+
+## Moving continuous support
+
+For $X=F_\alpha^{-1}(W)$ with $W\in(0,1)$,
+$dW=f_\alpha(X)dX$. Thus a latent moving-support coordinate contributes the
+fixed reference $dW$ and its marginal density factor disappears after change
+of variables. Dependence still enters through
+$\xi=\Phi^{-1}(W)$. If the coordinate affects the response,
+$p_{\theta}\{Y\mid h^{-1}(C\mu+F_\alpha^{-1}(W))\}$ is differentiated
+through both $\mu$ and $F_\alpha^{-1}$. The moving-boundary derivative is therefore represented by the
+pathwise quantile derivative rather than discarded.
+
+## Observed likelihood and Fisher identity
+
+Multiplying the normalized population density by the conditional response
+density and integrating over all unobserved coordinates gives $g_i(\theta)$. Under
+an integrable derivative envelope,
+
+\[
+\begin{aligned}
+E_\vartheta[\nabla\log \widetilde f_i(Z_i;\vartheta)\mid O_i]
+&=\int \frac{\nabla \widetilde f_i(z;\vartheta)}
+                  {\widetilde f_i(z;\vartheta)}
+       \frac{\widetilde f_i(z;\vartheta)}
+            {\widetilde g_i(\vartheta)}\,\lambda(dz)\\
+&=\frac{\nabla\int \widetilde f_i(z;\vartheta)\lambda(dz)}
+        {\widetilde g_i(\vartheta)}
+ =\nabla\log \widetilde g_i(\vartheta).
+\end{aligned}
+\]
+
+The chain rule gives
+$\nabla_\vartheta\bar\ell=J_\tau(\vartheta)^{\mathsf T}
+\nabla_\theta\bar\ell$. A nonsingular $J_\tau$ makes native- and internal-
+coordinate stationary points equivalent.
+
+## Gaussian nested model and FFEM translation
+
+When every margin is Normal, write $X=\mu+D\xi$, where
+$\xi\sim N_d(0,R)$ and $D$ is the diagonal matrix of marginal standard
+deviations. It follows directly that
+
+\[
+ X\sim N_d(\mu,DRD).                                      \tag{A2}
+\]
+
+Thus the all-Normal Gaussian-copula model is the standard multivariate-Normal
+FREM model with $\Omega_{\mathrm{FREM}}=DRD$; it is not an approximation to
+that model.
+
+Let $P$ index the parameter random effects and let $S$ be any selected subset
+of continuous covariates. Marginalizing covariates outside $S$ leaves the
+Gaussian subvector $(\xi_P,\xi_S)$ with the corresponding submatrix of $R$.
+The multivariate-Normal conditioning formula gives
+
+\[
+ \xi_P\mid \xi_S=z_S
+ =B_{\xi,S}z_S+L_S\varepsilon,
+ \qquad
+ B_{\xi,S}=R_{P,S}R_{S,S}^{-1},
+ \qquad
+ L_SL_S^{\mathsf T}
+ =R_{P,P}-B_{\xi,S}R_{S,P},                              \tag{A3}
+\]
+
+where $\varepsilon\sim N(0,I)$. If the parameter margins are Normal,
+$\eta_P=D_P\xi_P$; substitution in (A3) yields the coefficient matrix
+$D_PB_{\xi,S}$ and UPV covariance
+$D_PL_SL_S^{\mathsf T}D_P$ stated in the conventional FFEM representation.
+If the selected covariate margins are also Normal, replacing
+$z_S$ by $D_S^{-1}(c_S-\mu_S)$ gives the usual raw-scale FREM coefficient
+matrix and Schur-complement UPV covariance.
+
+For continuous non-Normal parameter margins, let $Q_\eta$ apply their quantile
+functions componentwise. Since
+$\eta_P=Q_\eta\{\Phi(\xi_P)\}$, (A3) gives
+
+\[
+ \eta_P\mid c_S
+ =Q_\eta\!\left[\Phi\!\left\{
+ B_{\xi,S}z_S(c_S)+L_S\varepsilon\right\}\right].        \tag{A4}
+\]
+
+Equation (A4) is the distributional FFEM representation in the main text and
+has exactly the same conditional law as the fitted FREM. For an ordered
+categorical covariate, conditioning is instead on its latent Gaussian interval;
+integrating (A3) over the corresponding truncated-Normal score distribution
+gives the stated interval mixture. Finally, direct FREM and translated-FFEM
+predictions integrate the same response kernel $p(Y\mid\eta_P)$ against this
+same conditional distribution. Their conditional predictive distributions are
+therefore identical when the population parameters are held fixed.
+
+# Controlled kernel and convergence details
+
+## Exact conditional-population proposal
+
+Let $q_{\vartheta,i}(\psi)$ denote the population density of $\psi_i$
+conditional on observed covariates, from which proposals are sampled exactly,
+and let
+$L_{\vartheta,i}(\psi)=p_{\theta}(Y_i\mid\psi,x_i)$. Then
+
+\[
+ \pi_{\vartheta,i}(\psi)=
+ \frac{L_{\vartheta,i}(\psi)q_{\vartheta,i}(\psi)}
+      {\int L_{\vartheta,i}(v)q_{\vartheta,i}(v)dv}.
+\]
+
+Suppose uniformly on the compact parameter set that
+$L_{\vartheta,i}(\psi)\leq M_i$ and its normalizer is at least $m_i>0$.
+The independence-Metropolis weight
+$w=\pi/q$ is bounded by $M_i/m_i$, and therefore
+
+\[
+ P^{\rm ind}_{\vartheta,i}(\psi,A)
+ \geq(m_i/M_i)\Pi_{\vartheta,i}(A).                        \tag{B1}
+\]
+
+Composition with any other invariant Metropolis kernels preserves the
+minorization. With finitely many subjects and chains, the product chain has a
+uniform Doeblin bound. Exact conditional augmentation after the eta move also
+preserves it: if $R_\vartheta(da\mid\psi')$ draws missing/categorical/fixed-
+reference variables, then
+
+\[
+ \widetilde P_\vartheta\{(\psi,a),d\psi' da'\}
+ =P_\vartheta(\psi,d\psi')R_\vartheta(da'\mid\psi')
+ \geq\epsilon\Pi_\vartheta(d\psi',da').                   \tag{B2}
+\]
+
+If a rejection sampler for a multivariate category rectangle reaches its
+finite iteration limit, the iteration is terminated without substituting an
+approximate draw.
+
+## Markovian stochastic-approximation decomposition
+
+After finite adaptation, write the score noise as the conditional mean plus a
+martingale term, a Poisson-equation remainder and numerical error:
+
+\[
+ \widehat H_{k+1}=\nabla\bar\ell(\vartheta_k)
+  +e_{k+1}+r^{\rm P}_{k+1}+r^{\rm num}_{k+1}.              \tag{B3}
+\]
+
+Here is the precise mapping to Fort et al. [@fort2016]. On every visited
+compact parameter set, assume their H1--H2 with a drift function $W$: the
+partially marginalized score is uniformly $W$-bounded, each
+$P_\vartheta$ has unique invariant distribution $\Pi_\vartheta$, the kernels
+are uniformly $W$-geometrically ergodic, and, for some $p\geq2$,
+
+\[
+ \sup_\vartheta P_\vartheta W^p\leq\rho W^p+b,
+ \qquad \rho<1.                                           \tag{B4}
+\]
+
+The common minorization in (B1)--(B2), together with Lipschitz dependence of
+the kernel after finite adaptation, supplies H3 with exponent $\upsilon=1$. H4 is the following
+integrated local-oscillation condition for the actual fixed-preconditioner
+increment $\mathcal H_\vartheta$: for every compact $K$ and $\delta>0$,
+
+\[
+ \sup_{\vartheta\in K}\int\Pi_\vartheta(dx)
+ \sup_{\substack{\vartheta'\in K\\
+                  \|\vartheta'-\vartheta\|\leq\delta}}
+ \|\mathcal H_{\vartheta'}(x)-\mathcal H_\vartheta(x)\|
+ \leq C_K\delta^\alpha,\qquad \alpha=1.                 \tag{B5}
+\]
+
+Smoothness of the mean field alone does not imply (B5); it is a stated
+regularity condition. Under H1--H4, the associated Poisson-equation solutions
+have the bounds used by Fort et al. Proposition 4.11. Their H6 requires a
+power-law gain exponent satisfying
+
+\[
+ a>\max\!\left\{\frac1p,
+ \frac{1+(\alpha\wedge\upsilon)/p}
+      {1+(\alpha\wedge\upsilon)}\right\}.                \tag{B6}
+\]
+
+For $p\geq2$ and $\alpha=\upsilon=1$, the implemented $a=0.80>0.75$
+satisfies (B6), not merely the usual Robbins--Monro sums.
+
+After safeguards become inactive, apply Fort et al. Proposition 4.6 to the
+stopped tail recursion with mean field $h=A\nabla\bar\ell$. Its C-i follows
+from differentiability, C-ii from compact-tail stability, and C-iii from the
+gain. For H5 and C-v(A), assume a coercive continuously differentiable
+extension $w$ that equals $-\bar\ell+C$ near the visited compact tail, has
+compact level sets and compact zero-drift set
+
+\[
+ \mathcal L_w=\{\vartheta:
+   \langle\nabla w(\vartheta),h(\vartheta)\rangle=0\},
+\]
+
+such that $w(\mathcal L_w)$ has empty interior and
+$\mathcal L_w\cap K_{\rm tail}=\mathcal L\cap K_{\rm tail}$. This global
+extension and its critical-value property are assumptions, not automatic
+consequences of local likelihood smoothness.
+
+It remains to establish Proposition 4.6 C-iv. Apply Fort et al. Proposition
+4.11 and Corollary 4.12 to the process stopped on exit from the compact tail;
+eventual safeguard inactivity makes the exit time infinite from some finite
+random time onward. For its weighted controlled-Markov perturbation $\xi_j$,
+write
+
+\[
+ A_k=\sup_{l\geq k}\left\|\sum_{j=k}^l\gamma_j\xi_j\right\|.
+\]
+
+Overlapping partial sums give $A_n\leq2A_k$ whenever $n\geq k$. Hence, for
+every $\delta>0$,
+
+\[
+ \{\limsup_n A_n\geq\delta\}
+ \subseteq\bigcap_k\{A_k\geq\delta/2\}.                 \tag{B7}
+\]
+
+Corollary 4.12 gives
+$P(A_k\geq\delta/2)\to0$, so the probability of the intersection is zero.
+A countable sequence of positive rational $\delta$ proves $A_k\to0$ almost
+surely on the no-exit tail. Thus C-iv holds. Proposition 4.6 then yields
+$d(\vartheta_k,\mathcal L)\to0$ almost surely. The finite prefix cannot change
+the limit set. This is a conditional stationary-set result for Delyon et al.'s
+stochastic-gradient equation (74), not an invocation of their finite-statistic
+SAEM Theorem 5 or 8.
+
+# Numerical score error
+
+For centered differences, suppose
+
+\[
+ \mathcal H_{h_k}(\vartheta,u)=\mathcal H(\vartheta,u)+r_k(\vartheta,u),
+ \qquad \|r_k(\vartheta,u)\|\leq h_k^2M(u),
+\]
+
+with $\sup_kE\{M(Z_k)\}<\infty$. Taking $h_k=h_0\sqrt{\gamma_k}$,
+Tonelli's theorem gives
+
+\[
+ E\!\left[\sum_k \gamma_k\|r_k\|\right]
+ \leq C\sum_k \gamma_kh_k^2
+ =Ch_0^2\sum_k \gamma_k^2<\infty.                         \tag{C1}
+\]
+
+The nonnegative random series is therefore finite almost surely. This controls
+the complete random numerical perturbation, not merely its conditional mean.
+Post-freeze one-sided differences are rejected because they do not satisfy the
+same centered second-order error statement.
+
+The reported endpoint averages internal-coordinate iterates after finite burn-
+in. If raw iterates converge to an isolated stationary point, their Cesaro
+average has the same limit. No asymptotic-efficiency claim for the average is
+made; Markov-chain trajectory averaging requires additional assumptions
+[@liang2010].

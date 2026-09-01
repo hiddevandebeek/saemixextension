@@ -82,6 +82,20 @@ simulateIndividualParameters<-function(object, nsim, seed, uncertainty=FALSE) {
   ind.eta<-saemix.model["indx.omega"]
   nb.etas<-length(ind.eta)
   NM <- object["data"]["N"]*nsim  
+  population<-attr(object,"saemix.copula",exact=TRUE)
+  if(!is.null(population)) {
+    if((population$dConditioning %||% 0L)>0L)
+      stop("joint parameter-covariate copulas require conditional population simulation")
+    if(!is.null(seed))set.seed(seed)
+    if(!identical(as.integer(population$etaIndex),as.integer(ind.eta)))
+      stop("stored population ordering does not match the fitted model")
+    mean.phiM<-do.call(rbind,rep(list(saemix.res["mean.phi"]),nsim))
+    u<-rvinecopulib::rvinecop(NM,population$vine)
+    etaM<-copulaMarginsQuantile(u,population$margins)
+    phiM<-mean.phiM;phiM[,ind.eta]<-mean.phiM[,ind.eta,drop=FALSE]+etaM
+    psiM<-transphi(phiM,saemix.model["transform.par"])
+    return(psiM)
+  }
   domega<-cutoff(mydiag(saemix.res["omega"][ind.eta, ind.eta]),.Machine$double.eps)
   omega.eta<-saemix.res["omega"][ind.eta,ind.eta]
   omega.eta<-omega.eta-mydiag(mydiag(saemix.res["omega"][ind.eta,ind.eta]))+mydiag(domega)

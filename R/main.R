@@ -16,6 +16,10 @@
 #' @param data an object of class SaemixData, created by a call to the function
 #' \code{\link{saemixData}}
 #' @param control a list of options, see \code{\link{saemixControl}}
+#' @param population optional population-distribution specification created by
+#' \code{copulaPopulation}; explicitly pass \code{NULL} for the unchanged
+#' Gaussian saemix path. For compatibility, omission uses a preceding low-level
+#' \code{copulaSet} declaration when one is active.
 #' @return An object of class SaemixObject containing the results of the fit of
 #' the data by the non-linear mixed effect model. A summary of the results is
 #' printed out to the terminal, and, provided the appropriate options have not
@@ -82,7 +86,16 @@
 #' }
 #' @export saemix
 
-saemix<-function(model,data,control=list()) {
+saemix<-function(model,data,control=list(),population=NULL) {
+
+  ## A supplied population is scoped to this fit. NULL selects stock saemix.
+  .populationSupplied<-!missing(population)
+  if(.populationSupplied) {
+    .previousPopulationState<-as.list(.cop)
+    on.exit(copulaRestoreState(.previousPopulationState),add=TRUE)
+    copulaClear()
+    if(!is.null(population)) copulaUsePopulation(population)
+  }
 
 # Convergence plots during fit (special function, not user-level)
   convplot.infit<-function(allpar,K1,niter=0) {
@@ -109,7 +122,6 @@ saemix<-function(model,data,control=list()) {
     message("Please provide a valid data object (see the help page for SaemixData)\n")
     return("Missing data")
   }
-
   saemixObject<-new(Class="SaemixObject",data=data,model=model,options=control)
 #  saemixObject<-new(Class="SaemixObject",data=saemix.data, model=saemix.model,options=saemix.options)
   opt.warn<-getOption("warn")
@@ -169,7 +181,7 @@ saemix<-function(model,data,control=list()) {
   # 	XM<-chdat["dataM"][,saemix.data["name.predictors"],drop=FALSE]
   
 # List of sufficient statistics - change during call to stochasticApprox
-  suffStat<-list(statphi1=0,statphi2=0,statphi3=0,statrese=0)
+  suffStat<-list(statphi1=0,statphi2=0,statphi3=0,statpsi1=0,statrese=0)
   phi<-array(data=0,dim=c(Dargs$N, Uargs$nb.parameters, saemix.options$nb.chains))
 
 # structural model, check nb of parameters
@@ -182,6 +194,12 @@ saemix<-function(model,data,control=list()) {
   if(saemix.options$warnings) cat("Running main SAEM algorithm\n")
   if(saemix.options$warnings) print(date())
   for (kiter in 1:saemix.options$nbiter.tot) { # Iterative portion of algorithm
+  .iterationStarted<-proc.time()[["elapsed"]]
+  .profileGamma<-if(copulaActive())
+    copulaStepSize(kiter,opt$stepsize[kiter]) else opt$stepsize[kiter]
+  if(copulaActive())
+    copulaProfileEvent(kiter,"iteration_start",.profileGamma,
+      final=kiter==saemix.options$nbiter.tot)
     
 # SAEM convergence plots
 	if(kiter%%saemix.options$nbdisplay==0) {
@@ -201,10 +219,18 @@ saemix<-function(model,data,control=list()) {
   	suffStat$statphi1<-0
   	suffStat$statphi2<-0
   	suffStat$statphi3<-0
+	  suffStat$statpsi1<-0
   }
 
 	# E-step
+  .estepStarted<-proc.time()[["elapsed"]]
   xmcmc<-estep(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM)
+  .estepElapsed<-proc.time()[["elapsed"]]-.estepStarted
+  if(copulaActive()) {
+    .cop$timing$estep<-(.cop$timing$estep %||% 0)+.estepElapsed
+    copulaProfileEvent(kiter,"estep_end",.profileGamma,.estepElapsed,
+      final=kiter==saemix.options$nbiter.tot)
+  }
   varList<-xmcmc$varList
   DYF<-xmcmc$DYF
   phiM<-xmcmc$phiM
@@ -243,6 +269,12 @@ saemix<-function(model,data,control=list()) {
       theta<-c(fixed.psi,var.eta[Uargs$i1.omega2])
     }
   # End of loop on kiter
+  if(copulaActive()) {
+    .iterationElapsed<-proc.time()[["elapsed"]]-.iterationStarted
+    .cop$timing$iteration<-(.cop$timing$iteration %||% 0)+.iterationElapsed
+    copulaProfileEvent(kiter,"iteration_end",.profileGamma,.iterationElapsed,
+      final=kiter==saemix.options$nbiter.tot)
+  }
   }
   
   etaM<-xmcmc$etaM # only need etaM here (re-created in estep otherwise)
@@ -268,7 +300,8 @@ saemix<-function(model,data,control=list()) {
   cond.mean.phi[,Uargs$i1.omega2]<-sphi1[,Uargs$i1.omega2]
   cond.var.phi<-array(data=0,dim=dim(phi))
   cond.var.phi[,Uargs$i1.omega2]<-suffStat$statphi3[,Uargs$i1.omega2]-cond.mean.phi[,Uargs$i1.omega2]**2
-  cond.mean.psi<-transphi(cond.mean.phi,saemixObject["model"]["transform.par"])
+  cond.mean.psi<-transphi(cond.mean.phi,
+    saemixObject["model"]["transform.par"])
   
   cond.mean.eta<-matrix(0,nrow=dim(etaM)[1],ncol=Uargs$nb.parameters)
   cond.mean.eta[,varList$ind.eta]<-etaM
@@ -295,6 +328,28 @@ saemix<-function(model,data,control=list()) {
   saemix.res["indx.cov"]<-Uargs$indx.betaC
   saemix.res["indx.omega"]<-Uargs$i1.omega2
   saemix.res["npar.est"]<-Uargs$nb.parest
+  copula.state <- NULL
+  if (copulaActive()) {
+    copula.live <- copulaGet()
+    ## Replace the Gaussian covariance parameter count by the actual fixed
+    ## marginal+vine parameter count.  The counts coincide for the full
+    ## Gaussian-vine null, so stock AIC/BIC behavior is preserved there.
+    n.stock.prior <- sum(saemix.model["covariance.model"][
+      upper.tri(saemix.model["covariance.model"], diag=TRUE)])
+    n.margin <- if (isTRUE(copula.live$estimatedMargins))
+      sum(vapply(copula.live$margins,
+        function(m) sum(m$free), integer(1))) else 0L
+    n.vine <- if (isTRUE(copula.live$estimatedVine))
+      sum(vapply(copulaPadFlat(copula.live$vine, copula.live$d),
+        function(edge) length(edge$parameters), integer(1))) else 0L
+    saemix.res["npar.est"] <- Uargs$nb.parest - n.stock.prior +
+      n.margin + n.vine
+    copula.live$npar.margin <- n.margin
+    copula.live$npar.vine <- n.vine
+    copula.state <- copulaSnapshot(copula.live,
+      etaIndex = saemix.model["indx.omega"],
+      variableName = saemix.model["name.modpar"][saemix.model["indx.omega"]])
+  }
   saemix.res["nbeta.random"]<- sum(saemix.model["betaest.model"]%*%diag(saemix.model["fixed.estim"])%*%as.matrix(diag(saemix.model["covariance.model"])))
   saemix.res["nbeta.fixed"]<-  sum(saemix.model["betaest.model"]%*%diag(saemix.model["fixed.estim"])%*%as.matrix(-1*diag(saemix.model["covariance.model"])+1))
   saemix.res["cond.mean.psi"]<-cond.mean.psi
@@ -305,6 +360,8 @@ saemix<-function(model,data,control=list()) {
   saemixObject["model"]<-saemix.model
   saemixObject["results"]<-saemix.res
   saemixObject["options"]<-saemix.options
+  if (!is.null(copula.state))
+    attr(saemixObject, "saemix.copula") <- copula.state
 #  saemixObject["rep.data"]<-chdat # Utile ? maybe remove rep.data
 
 # ECO TODO check
@@ -314,16 +371,21 @@ saemix<-function(model,data,control=list()) {
 #### Final computations
 # Compute the MAP estimates of the PSI_i's 
   if(saemix.options$map) {
-    x<-try(saemixObject<-map.saemix(saemixObject))
-    if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the MAP parameters\n") else {
-      if(!saemix.options$save.graphs) saemixObject<-saemix.predict(saemixObject, type=c("ipred","ppred")) # if no graphs, compute predictions all the same
-    }
+      x<-try(saemixObject<-map.saemix(saemixObject))
+      if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the MAP parameters\n") else {
+        if(!saemix.options$save.graphs) saemixObject<-saemix.predict(saemixObject, type=c("ipred","ppred")) # if no graphs, compute predictions all the same
+      }
   }
   
 # Compute the Fisher Information Matrix & update saemix.res
   if(saemix.options$fim) {
-    x<-try(saemixObject<-fim.saemix(saemixObject))
-    if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the FIM\n")
+    if (!is.null(copula.state)) {
+      if (saemixObject@options$warnings)
+        message("FIM calculation skipped: Gaussian-prior information is invalid for the fitted copula model.\n")
+    } else {
+      x<-try(saemixObject<-fim.saemix(saemixObject))
+      if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the FIM\n")
+    }
   }
   
 # Estimate the log-likelihood via importance Sampling/Gaussian quadrature
@@ -332,8 +394,13 @@ saemix<-function(model,data,control=list()) {
     if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the likelihood by IS\n")
   }
   if(saemix.options$ll.gq) {
-    x<-try(saemixObject<-llgq.saemix(saemixObject))
-    if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the likelihood by GQ\n")
+    if (!is.null(copula.state)) {
+      if (saemixObject@options$warnings)
+        message("Gaussian quadrature skipped: stock quadrature assumes Gaussian random effects.\n")
+    } else {
+      x<-try(saemixObject<-llgq.saemix(saemixObject))
+      if(inherits(x,"try-error") & saemixObject@options$warnings) message("Problem estimating the likelihood by GQ\n")
+    }
   }
   
 #### Pretty printing the results (TODO finish in particular cov2cor)

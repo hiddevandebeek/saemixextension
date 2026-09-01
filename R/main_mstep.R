@@ -5,16 +5,24 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 	# Output: varList, phi, betas, suffStat (changed)
 	#					mean.phi (created)
 
+	useCop<-copulaActiveAt(kiter)
+	population<-if(useCop) .cop else NULL
+	scoreAlgorithm<-useCop && identical(population$populationAlgorithm,
+		"score-sa")
+	if(useCop && !scoreAlgorithm)
+		stop("the installed population runtime supports only score-sa")
 	# Update variances - TODO - check if here or elsewhere
 	nb.etas<-length(varList$ind.eta)
-	domega<-cutoff(mydiag(varList$omega[varList$ind.eta,varList$ind.eta]),.Machine$double.eps)
-	omega.eta<-varList$omega[varList$ind.eta,varList$ind.eta,drop=FALSE]
-	omega.eta<-omega.eta-mydiag(mydiag(varList$omega[varList$ind.eta,varList$ind.eta]))+mydiag(domega)
-	#  print(varList$omega.eta)
-	chol.omega<-try(chol(omega.eta))
-	d1.omega<-Uargs$LCOV[,varList$ind.eta]%*%solve(omega.eta)
-	d2.omega<-d1.omega%*%t(Uargs$LCOV[,varList$ind.eta])
-	comega<-Uargs$COV2*d2.omega
+	if(!scoreAlgorithm) {
+		domega<-cutoff(mydiag(varList$omega[varList$ind.eta,varList$ind.eta]),.Machine$double.eps)
+		omega.eta<-varList$omega[varList$ind.eta,varList$ind.eta,drop=FALSE]
+		omega.eta<-omega.eta-mydiag(mydiag(varList$omega[varList$ind.eta,varList$ind.eta]))+mydiag(domega)
+		#  print(varList$omega.eta)
+		chol.omega<-try(chol(omega.eta))
+		d1.omega<-Uargs$LCOV[,varList$ind.eta]%*%solve(omega.eta)
+		d2.omega<-d1.omega%*%t(Uargs$LCOV[,varList$ind.eta])
+		comega<-Uargs$COV2*d2.omega
+	}
 
 	psiM<-transphi(phiM,Dargs$transform.par)
 	fpred<-structural.model(psiM, Dargs$IdM, Dargs$XM)
@@ -28,6 +36,9 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 	stat1<-apply(phi[,varList$ind.eta,,drop=FALSE],c(1,2),sum) # sum on columns ind.eta of phi, across 3rd dimension
 	stat2<-matrix(data=0,nrow=nb.etas,ncol=nb.etas)
 	stat3<-apply(phi**2,c(1,2),sum) #  sum on phi**2, across 3rd dimension
+	statpsi1<-matrix(0,nrow=Dargs$N,ncol=Uargs$nb.parameters)
+	for(k in 1:Uargs$nchains)
+		statpsi1<-statpsi1+psiM[((k-1)*Dargs$N+1):(k*Dargs$N),,drop=FALSE]
 	statr<-0
 	for(k in 1:Uargs$nchains) {
 		phik<-phi[,varList$ind.eta,k]
@@ -46,16 +57,24 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		} else resk<-0
 		statr<-statr+resk
 	}
+	scoreResidualUpdated<-FALSE
+	gamma<-copulaStepSize(kiter,opt$stepsize[kiter])
+	if(useCop) copulaRecordPhase(kiter,gamma)
 	# Update sufficient statistics
-	suffStat$statphi1<-suffStat$statphi1+opt$stepsize[kiter]*(stat1/Uargs$nchains-suffStat$statphi1)
-	suffStat$statphi2<-suffStat$statphi2+opt$stepsize[kiter]*(stat2/Uargs$nchains-suffStat$statphi2)
-	suffStat$statphi3<-suffStat$statphi3+opt$stepsize[kiter]*(stat3/Uargs$nchains-suffStat$statphi3)
-	suffStat$statrese<-suffStat$statrese+opt$stepsize[kiter]*(statr/Uargs$nchains-suffStat$statrese)
+	suffStat$statphi1<-suffStat$statphi1+gamma*(stat1/Uargs$nchains-suffStat$statphi1)
+	suffStat$statphi2<-suffStat$statphi2+gamma*(stat2/Uargs$nchains-suffStat$statphi2)
+	suffStat$statphi3<-suffStat$statphi3+gamma*(stat3/Uargs$nchains-suffStat$statphi3)
+	suffStat$statpsi1<-suffStat$statpsi1+gamma*(statpsi1/Uargs$nchains-suffStat$statpsi1)
+	suffStat$statrese<-suffStat$statrese+gamma*(statr/Uargs$nchains-suffStat$statrese)
 
 	############# Maximisation
 	##### fixed effects
 
-	if (opt$flag.fmin && kiter>=opt$nbiter.sa) {
+	if (scoreAlgorithm) {
+		## Equation-74 score-SA owns every estimated population-location
+		## coefficient. Keep its preceding accepted value as the incumbent;
+		## the ordinary Gaussian GLS/compute.Uy solve would be discarded below.
+	} else if (opt$flag.fmin && kiter>=opt$nbiter.sa) {
 		temp<-d1.omega[Uargs$ind.fix11,]*(t(Uargs$COV1)%*%(suffStat$statphi1-Uargs$dstatCOV[,varList$ind.eta]))
 		betas[Uargs$ind.fix11]<-solve(comega[Uargs$ind.fix11,Uargs$ind.fix11],rowSums(temp))
 		# ECO TODO: utiliser optimise dans le cas de la dimension 1
@@ -66,7 +85,7 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 #		  cat("ind.fix10=",Uargs$ind.fix10,"ind.fix11=",Uargs$ind.fix11,"ind.fix1=",Uargs$ind.fix1,"ind.fix0=",Uargs$ind.fix0,"\n")
 #  		cat(betas,"\n")
 #		}
-		betas[Uargs$ind.fix10]<-betas[Uargs$ind.fix10]+opt$stepsize[kiter]*(beta0-betas[Uargs$ind.fix10])
+		betas[Uargs$ind.fix10]<-betas[Uargs$ind.fix10]+gamma*(beta0-betas[Uargs$ind.fix10])
 	} else {
 		temp<-d1.omega[Uargs$ind.fix1,]*(t(Uargs$COV1)%*%(suffStat$statphi1-Uargs$dstatCOV[,varList$ind.eta]))
 		betas[Uargs$ind.fix1]<-solve(comega[Uargs$ind.fix1,Uargs$ind.fix1],rowSums(temp))
@@ -76,44 +95,60 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 	mean.phi<-Uargs$COV %*% varList$MCOV
 	e1.phi<-mean.phi[,varList$ind.eta,drop=FALSE]
 
-	## Copula prior (research extension): carry Q-hat as a WEIGHTED PARTICLE
-	## POOL instead of a finite sufficient statistic -- Delyon et al. (1999)
-	## eq. (6) with Q-hat a weighted empirical measure, because (M1) fails once
-	## any pair copula is non-Gaussian.  The M-step is IFM, not the exact joint
-	## maximiser.  varList$omega is then only a Gaussian surrogate, used for the
-	## betas GLS block and the random-walk step scaling.
-	if(copulaActive()) {
-		mean.phiM<-do.call(rbind,rep(list(mean.phi),Uargs$nchains))
-		etaPool<-phiM[,varList$ind.eta,drop=FALSE]-mean.phiM[,varList$ind.eta,drop=FALSE]
-		copulaPoolUpdate(etaPool, opt$stepsize[kiter], Uargs$nchains)
-		omSS<-suffStat$statphi2/Dargs$N + t(e1.phi)%*%e1.phi/Dargs$N - t(suffStat$statphi1)%*%e1.phi/Dargs$N - t(e1.phi)%*%suffStat$statphi1/Dargs$N
-		copulaMstep(kiter, opt$nbiter.sa, opt$alpha1.sa,
-		            sdSS=sqrt(pmax(mydiag(omSS), .Machine$double.eps)), gamma=opt$stepsize[kiter])
-		## mode="joint" also maximises Q over a location shift; push it back into
-		## betas by least squares on the design matrix, which is exact whenever
-		## the shift lies in the column space of COV (it does: COV always has an
-		## intercept per parameter).  Without this mu solves E[eta]=0, an
-		## estimating equation rather than the score, and the fit is not an MLE.
-		.dl<-copulaTakeDelta()
-		if(!is.null(.dl) && any(abs(.dl)>0)) {
-			## A location shift is exactly an intercept change, so add it to the
-			## intercept ROW of MCOV.  (A least-squares solve on COV is not safe:
-			## saemix's design matrix has structurally zero columns, so
-			## t(COV)%*%COV is singular.)
-			.ic<-which(apply(Uargs$COV,2,function(z) all(abs(z-1)<1e-12)))
-			if(length(.ic)>=1) {
-				varList$MCOV[.ic[1],varList$ind.eta]<-varList$MCOV[.ic[1],varList$ind.eta]+.dl
-				mean.phi<-Uargs$COV %*% varList$MCOV
-				betas[]<-varList$MCOV[Uargs$j.covariate]   # keep matrix shape
-				e1.phi<-mean.phi[,varList$ind.eta,drop=FALSE]
-			}
+	## Record the current MCMC batch and apply one population-score update.
+	## varList$omega remains the Gaussian proposal/output surrogate.
+	if(useCop) {
+		.batchStarted<-proc.time()[["elapsed"]]
+		mean.phiM<-mean.phi[rep(seq_len(nrow(mean.phi)),Uargs$nchains),,drop=FALSE]
+		etaBatch<-phiM[,varList$ind.eta,drop=FALSE]-mean.phiM[,varList$ind.eta,drop=FALSE]
+		## Hold absolute phi fixed while beta moves; centred eta alone would give
+		## the wrong population-location score.
+		.designBatch<-Uargs$COV[rep(seq_len(nrow(Uargs$COV)),Uargs$nchains),,drop=FALSE]
+		copulaScoreBatchUpdate(etaBatch, Uargs$nchains,
+		  phi=phiM[,varList$ind.eta,drop=FALSE], design=.designBatch,
+		  locationMap=Uargs$LCOV[,varList$ind.eta,drop=FALSE],
+		  beta=as.numeric(betas), betaFree=Uargs$ind.fix1,
+		  subject=rep(seq_len(Dargs$N),Uargs$nchains))
+		.updateElapsed<-proc.time()[["elapsed"]]-.batchStarted
+		.cop$timing$batchUpdate<-.cop$timing$batchUpdate+.updateElapsed
+		.finalCopula<-kiter==sum(opt$nbiter.saemix)
+		.scoreResponse<-NULL
+		if(scoreAlgorithm)
+			.scoreResponse<-copulaScoreResponseBlock(
+				phi=phiM, randomIndex=varList$ind.eta,
+				transform=Dargs$transform.par, id=Dargs$IdM, x=Dargs$XM,
+				y=rep(Dargs$yobs,Uargs$nchains),
+				errorModel=Dargs$error.model,
+				exponentialType=Dargs$etype.exp,
+				structuralModel=structural.model, predictions=fpred,
+				residual=varList$pres, residualSum=statr,
+				nchains=Uargs$nchains, nobs=Dargs$nobs,
+				hasFixedOnly=length(Uargs$ind.fix10)>0L)
+		copulaScoreMstep(kiter, final=.finalCopula, response=.scoreResponse)
+		.rj<-copulaTakeResidual()
+		if(!is.null(.rj)) {
+			varList$pres<-.rj
+			scoreResidualUpdated<-TRUE
 		}
-		copulaDiag(kiter, betas, colMeans(etaPool), varList$pres, opt$stepsize[kiter])
+		## mode="joint" also maximises Q over every estimated eta-location
+		## coefficient.  The production path returns absolute intercept and
+		## covariate coefficients; the older delta path remains only for the
+		## design-free unit-test API.  Without this block the location parameters
+		## solve an estimating equation rather than the copula-model score.
+		.bj<-copulaTakeBeta()
+		if(!is.null(.bj)) {
+			## Design-aware joint M-step: update intercepts and covariate effects
+			## together.  j.covariate is the canonical beta -> MCOV mapping.
+			varList$MCOV[Uargs$j.covariate]<-.bj
+			mean.phi<-Uargs$COV %*% varList$MCOV
+			betas[]<-.bj                         # keep matrix shape
+			e1.phi<-mean.phi[,varList$ind.eta,drop=FALSE]
+		}
 	}
 
 	# Covariance of the random effects
 	omega.full<-matrix(data=0,nrow=Uargs$nb.parameters,ncol=Uargs$nb.parameters)
-	if(copulaActive()) {
+	if(useCop) {
 		omega.full[varList$ind.eta,varList$ind.eta]<-copulaOmega()
 	} else {
 	omega.full[varList$ind.eta,varList$ind.eta]<-suffStat$statphi2/Dargs$N + t(e1.phi)%*%e1.phi/Dargs$N - t(suffStat$statphi1)%*%e1.phi/Dargs$N - t(e1.phi)%*%suffStat$statphi1/Dargs$N
@@ -135,7 +170,7 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 
 	# Residual error
 	# Modified to add SA to constant and exponential residual error models (Edouard Ollier 10/11/2016)
-	if(Dargs$modeltype=="structural") {
+	if(Dargs$modeltype=="structural" && !scoreResidualUpdated) {
 		if(length(Uargs$ind.res)==1) { # necessarily only one error model
 		    if (Dargs$error.model[1] %in% c("constant","exponential")) {
 		      sig2<-suffStat$statrese/Dargs$nobs
@@ -167,12 +202,12 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		      if (kiter<=opt$nbiter.saemix[1]) {
 		        for(i in 1:length(varList$pres)) varList$pres[i]<-ABres[i]
 		      } else {
-		        for(i in 1:length(varList$pres)) varList$pres[i]<-varList$pres[i]+opt$stepsize[kiter]*(ABres[i]-varList$pres[i])
+		        for(i in 1:length(varList$pres)) varList$pres[i]<-varList$pres[i]+gamma*(ABres[i]-varList$pres[i])
 		      }
 		    }
 		  }
 	}
 	if(isTRUE(getOption("saemixTrace",FALSE)))
-		.saemixTracePush(kiter, betas, mydiag(varList$omega), varList$pres, opt$stepsize[kiter], suffStat$statrese)
+		.saemixTracePush(kiter, betas, mydiag(varList$omega), varList$pres, gamma, suffStat$statrese)
 	return(list(varList=varList,mean.phi=mean.phi,phi=phi,betas=betas,suffStat=suffStat))
 }

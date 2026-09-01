@@ -193,10 +193,10 @@ discreteVPCTTE <- function(object, ngrid=200, interpolation.method="step", ytype
   ## time: simulated times
   if(length(ytype)>1) {
     ytype<-ytype[1]
-    if(verbose) msg("Only the first response given will be plotted, please make separate plots for different responses\n")
+    if(verbose) message("Only the first response given will be plotted, please make separate plots for different responses")
   }
   if(!is.integer(ytype) || ytype<1 || ytype>max(object@data@data$ytype)) {
-    if(verbose) msg(paste0("Response",ytype,"not recognised, defaulting to response 1\n"))
+    if(verbose) message("Response ", ytype, " not recognised, defaulting to response 1")
   }
   is.ytype<- (object@data@data$ytype==ytype)
   obsdat <- data.frame(id=object@data@data[is.ytype,object@data@name.group], 
@@ -495,10 +495,10 @@ discreteVPC.aux <- function(object, max.cat=10, ytype=1, breaks=NULL, catlabel=N
   ## updated plot.opt
   if(length(ytype)>1) {
     ytype<-ytype[1]
-    if(verbose) msg("Only the first response given will be plotted, please make separate plots for different responses\n")
+    if(verbose) message("Only the first response given will be plotted, please make separate plots for different responses")
   }
   if(!is.integer(ytype) || ytype<1 || ytype>max(object@data@data$ytype)) {
-    if(verbose) msg(paste0("Response",ytype,"not recognised, defaulting to response 1\n"))
+    if(verbose) message("Response ", ytype, " not recognised, defaulting to response 1")
   }
   is.ytype<- (object@data@data$ytype==ytype)
   

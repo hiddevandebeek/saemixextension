@@ -1639,10 +1639,8 @@ saemix.plot.distpsi<-function(saemixObject,...) {
     }
     xpl1<-mpar[ipar]+xpl*sqrt(diag(saemixObject["results"]["omega"]))[ipar]
     xpl2<-transphi(matrix(xpl1,ncol=1),saemixObject["model"]["transform.par"][ipar])
-    if(saemixObject["model"]["transform.par"][ipar]==2) {
-      ypl<-pnorm(xpl)*derivphi(matrix(xpl1,ncol=1), saemixObject["model"]["transform.par"][ipar])
-    } else
-      ypl<-dnorm(xpl)*derivphi(matrix(xpl1,ncol=1), saemixObject["model"]["transform.par"][ipar])
+    ypl<-dnorm(xpl)*derivphi(matrix(xpl1,ncol=1),
+      saemixObject["model"]["transform.par"][ipar])
     if(plot.opt$indiv.histo) {
       vec<-c(indiv.par[,(ipar)],xpl2)
       limx<-c(min(vec),max(vec))

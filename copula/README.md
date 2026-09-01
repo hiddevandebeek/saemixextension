@@ -1,68 +1,112 @@
-# R-vine copulas as the random-effect distribution in SAEM
+# Gaussian-copula FREM for saemix
 
-> **Continuing this work? Read [HANDOFF.md](HANDOFF.md) first.**
+This research fork adds one supported population estimator to the ordinary
+`saemix()` workflow: fixed Gaussian-copula FREM with declared marginal
+distributions, estimated by controlled-MCMC likelihood-score stochastic
+approximation.
 
-Research fork of saemix (branch `copula-eta`). Stock saemix behaviour is
-unchanged unless `copulaSet()` has been called.
+The estimator targets the observed-data likelihood of the declared model. It
+is the stochastic-gradient route discussed in Delyon, Lavielle and Moulines
+Section 8.2, not finite-statistic SAEM. The formal derivation is in
+[`manuscript/score-sa/article.Rmd`](manuscript/score-sa/article.Rmd).
 
-## The question
+## Minimal workflow
 
-SAEM converges to a stationary point of the EXACT marginal likelihood. Does that
-survive replacing the Gaussian eta distribution with an R-vine copula?
+```r
+population <- gaussianCopulaFrem(
+  etaSd = c(0.25, 0.30),
+  covariates = subjectData[, c("WT", "eGFR")]
+)
 
-Short answer from the theory: the *target* survives untouched -- it never
-depended on the prior being Gaussian. What breaks is assumption (M1) of Delyon,
-Lavielle & Moulines (1999), the curved exponential family, which is what makes
-the algorithm finite-dimensional and the convergence proof work.
+fit <- saemix(model, data, control, population = population)
+```
 
-And the scope of what is actually new is narrower than it looks:
+`covariateMargins = "auto"` fits a support-aware starting family from Normal,
+lognormal, Gamma, and Weibull. To isolate family selection from estimation,
+declare them explicitly:
 
-| feature | already available? |
-|---|---|
-| non-Gaussian eta *marginals* | yes -- `transform.par`, Monolix `h(psi)`: monotone maps of a Gaussian, (M1) intact |
-| Gaussian copula + arbitrary margins | yes -- same trick, (M1) intact, M-step unchanged |
-| Gaussian pair copulas on a vine | **is** MVN exactly (Bedford-Cooke) -- the nested null |
-| non-Gaussian *dependence* | NEW -- and precisely what breaks (M1) |
+```r
+population <- gaussianCopulaFrem(
+  etaMargins = list(
+    copulaMarginNormal(0.25),
+    copulaMarginNormal(0.30)
+  ),
+  covariates = subjectData[, c("WT", "eGFR")],
+  covariateMargins = list(
+    copulaMarginCovariateLognormal(log(70), 0.20),
+    copulaMarginCovariateGamma(12, 7.5)
+  )
+)
+```
 
-## Layout
+Omitting `population`, or passing `population = NULL`, uses unmodified stock
+Gaussian saemix behavior.
 
-    R/etaCopula.R    canonical vine representation, eta-scale density/sampling
-    R/simEta.R       Gaussian null + tau-matched non-Gaussian twin
-    R/simData.R      2-cmt IV bolus popPK model, 4 etas
-    R/diagnostic.R   route-C statistic (vine vs Gaussian-vine on the same structure)
-    R/marginalLL.R   independent IS marginal likelihood under an arbitrary prior
-    R/replicate.R    one route-C replicate
-    tests/           ordering + nested-null suites
-    run*.R           experiment drivers, results land in out/
+## Supported statistical scope
 
-The copula prior itself lives in the package: `../R/copulaPrior.R`, with gated
-hooks in `../R/main_estep.R` and `../R/main_mstep.R`.
+- full fixed Gaussian copula;
+- continuous fixed-support margins, continuous moving-support margins with a
+  valid CDF/quantile map, and multiple dependent binary, ordinal, or explicitly
+  ordered nominal categorical coordinates;
+- joint likelihood `p(y, covariates)`;
+- missing continuous Gaussian-copula covariates through exact conditional
+  augmentation;
+- missing categorical covariates and multivariate categorical dependence
+  through exact truncated-Gaussian, fixed-support latent-uniform augmentation;
+- fixed marginal families and copula structure during estimation;
+- one likelihood-score recursion for population locations, marginal
+  parameters, Gaussian dependence, and supported residual-error parameters.
 
-## Ordering contract (load-bearing)
+Custom margins must declare either `support_fixed = TRUE` or, for a continuous
+moving-support law, `support_fixed = FALSE`. The score route rejects undeclared
+support. In the latter case, the runtime fixes its percentile coordinate and
+propagates the candidate quantile through the response model. The score route
+also rejects family/structure selection during fitting, non-Gaussian pair
+copulas, conditional-likelihood fitting, indefinite proposal adaptation, and
+gain powers at or below 0.75.
 
-rvinecopulib is canonical: `dvine_structure(1:d)`, `pair_copulas[[t]][[e]]` is
-the copula of `(e, e+t)` given the variables strictly between them, and
+## Archived research paths
 
-    vine variable j == eta column j == varList$ind.eta[j]
+Historical experiments for general R-vines, direct natural-parameter margins,
+adaptive selection, collapse prototypes and retained-particle common-Q fitting
+are preserved under `legacy/package-prototypes`. They are not installed with
+the package and are not alternative estimators supported by the manuscript.
 
-VineCopula uses a TRANSPOSED array convention; it is used only as an independent
-oracle and its objects are never mixed with rvinecopulib's. `tests/test-ordering.R`
-checks this exactly (density-based, not Monte Carlo).
+## Main implementation path
 
-Two traps it pins down:
-- the inverse-Rosenblatt map `eta = T(z)` is order-dependent even for a plain
-  MVN, so a non-centered parametrisation must pin the eta order;
-- a vine containing a ROTATED pair copula is not invariant to relabelling
-  (rotated copulas are not exchangeable), so with rotations the eta order is
-  part of the model, not a free choice.
+```text
+gaussianCopulaFrem()
+  -> copulaPopulation()
+  -> saemix(..., population = population)
+  -> copulaScoreBatchUpdate()
+  -> copulaScoreMstep()
+  -> copulaGaussianFremPopulationScoreStep()
+  -> llisCopula.saemix() / conddistCopula.saemix()
+```
 
-## Running
+Core files:
 
-R is not on PATH:
+- `../R/gaussianCopulaFremApi.R` -- minimal public constructor;
+- `../R/copulaMargins.R` -- declared marginal distributions;
+- `../R/gaussianCopulaFrem.R` -- Gaussian-copula density and conditioning;
+- `../R/copulaScoreSa.R` -- current-batch score recursion;
+- `../R/copulaLikelihood.R` -- observed likelihood and conditional sampling;
+- `../R/main_estep.R`, `../R/main_mstep.R` -- small saemix hooks.
 
-    export PATH="/c/Program Files/R/R-4.5.3/bin/x64:$PATH"
-    cd copula
-    Rscript tests/test-ordering.R      # exact, seconds
-    Rscript tests/test-nested-null.R   # end-to-end, minutes
-    Rscript runPower.R 60 100 gumbel   # route-C power study
-    Rscript analysePower.R
+## Verification
+
+```powershell
+Rscript copula/tests/test-minimal-gaussian-copula-frem-api.R
+Rscript copula/tests/test-score-sa-analytic-gradient.R
+Rscript copula/tests/test-score-sa-fisher-oracle.R
+Rscript copula/tests/test-score-sa-end-to-end.R
+Rscript copula/tests/test-score-sa-gaussian-nested-null.R
+Rscript copula/tests/test-gaussian-copula-frem-categorical-end-to-end.R
+Rscript copula/tests/test-gaussian-copula-frem-multicategorical-end-to-end.R
+Rscript copula/tests/test-score-sa-multicategorical-fisher-oracle.R
+Rscript copula/tests/test-moving-support-score-sa.R
+```
+
+The systematic theory/code audit is in
+[`audits/saem-literature-20260829/SAEM-LITERATURE-AUDIT.md`](audits/saem-literature-20260829/SAEM-LITERATURE-AUDIT.md).
+For historical decisions and result provenance, see [`HANDOFF.md`](HANDOFF.md).

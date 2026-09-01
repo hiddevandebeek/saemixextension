@@ -9,6 +9,8 @@
 #' 
 #' @aliases llis.saemix
 #' @param saemixObject an object returned by the \code{\link{saemix}} function
+#' @param ... additional arguments passed to a fitted flexible population
+#' likelihood engine, including defensive mixture weight, batch size, and seed
 #' @return the log-likelihood estimated by Importance Sampling
 #' @author Emmanuelle Comets <emmanuelle.comets@@inserm.fr>, Audrey Lavenu,
 #' Marc Lavielle.
@@ -62,8 +64,13 @@
 #' 
 #' @export llis.saemix
 
-llis.saemix<-function(saemixObject) {
+llis.saemix<-function(saemixObject, ...) {
 	# Estimate the log-likelihood via importance Sampling
+	if (!is.null(attr(saemixObject, "saemix.copula", exact = TRUE))) {
+		if (exists("llisCopula.saemix", mode = "function"))
+			return(llisCopula.saemix(saemixObject, ...))
+		copulaPostprocessGuard(saemixObject, "llis.saemix")
+	}
 	
 	saemix.model<-saemixObject["model"]
 	saemix.data<-saemixObject["data"]
@@ -243,6 +250,7 @@ llis.saemix<-function(saemixObject) {
 #' @export llgq.saemix
 
 llgq.saemix<-function(saemixObject) {
+	copulaPostprocessGuard(saemixObject, "llgq.saemix")
 	# RES = MLXGQ(RES) Estimate the log-likelihood using Gaussian Quadrature (multidimensional grid)
 	nnodes.gq<-saemixObject["options"]$nnodes.gq  # number of nodes on each 1-D grid
 	nsd.gq<-saemixObject["options"]$nsd.gq  # the integral is computed on the interval [E(eta|y) +- nsd_gq*SD(eta|y)]

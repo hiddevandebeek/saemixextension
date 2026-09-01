@@ -13,42 +13,101 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	chol.omega<-try(chol(omega.eta))
 	somega<-solve(omega.eta)
 
-	## Copula prior (research extension).  Inactive unless copulaSet() was
-	## called, in which case the Gaussian quadratic form -log N(0,omega) is
-	## swapped for -log p_vine(eta) everywhere the kernels use the prior.
-	## Kernel 1 additionally proposes FROM the prior, so it generalises for free:
-	## the prior cancels in the MH ratio whatever the prior is.
-	useCop <- copulaActive()
-	if (useCop && ncol(as.matrix(etaSlot <- matrix(0, 1, nb.etas))) != copulaGet()$d)
-		stop("copula prior: dim ", copulaGet()$d, " but ", nb.etas, " etas with IIV")
-	Ueta <- if (useCop) function(e) copulaUeta(e) else
-		function(e) 0.5*rowSums(e*(e%*%somega))
+	## The optional population model replaces the Gaussian prior in each kernel.
+	useCop <- copulaActiveAt(kiter)
+	if (useCop) copulaActivateFromGaussian(kiter, omega.eta)
+	population <- if (useCop) .cop else NULL
+	scoreAlgorithm <- useCop && identical(population$populationAlgorithm,
+		"score-sa")
+	if(useCop && !scoreAlgorithm)
+		stop("the installed population runtime supports only score-sa")
+	nCategorical <- if (scoreAlgorithm) sum(vapply(population$margins,
+		function(m) identical(m$type, "discrete"), logical(1))) else 0L
+	## With several categorical coordinates, rectangle quadrature is not used
+	## in an MH ratio.  Kernel 1 is the exact conditional-prior independence
+	## kernel; the fixed-support latent uniforms are drawn after the eta move for
+	## the complete score.  This preserves the exact likelihood mean field.
+	multiCategoricalScore <- scoreAlgorithm && nCategorical > 1L
+	movingEtaScore <- scoreAlgorithm && any(vapply(
+		population$margins[seq_len(population$dEta)],
+		copulaMarginHasMovingSupport, logical(1)))
+	if(scoreAlgorithm)
+		.cop$multiCategoricalExactKernel <- isTRUE(multiCategoricalScore)
+	if (scoreAlgorithm && opt$nbiter.mcmc[1L] < 1L)
+		stop("the theorem-backed score-sa route requires at least one conditional-prior independence proposal per iteration")
+	proposalAdaptUntil <- if (scoreAlgorithm) population$scoreBurn else Inf
+	adaptRandomWalk <- !scoreAlgorithm || kiter <= proposalAdaptUntil
+	if (scoreAlgorithm && kiter == proposalAdaptUntil + 1L &&
+	    is.null(.cop$rwProposalFrozen)) {
+		.cop$rwProposalFrozen <- as.matrix(varList$domega2)
+		.cop$rwProposalFreezeIteration <- as.integer(proposalAdaptUntil)
+		.cop$rwBlockSizeFrozen <- as.integer(nb.etas)
+	}
+	if (scoreAlgorithm && kiter > proposalAdaptUntil &&
+	    !is.null(.cop$rwProposalFrozen) &&
+	    max(abs(as.matrix(varList$domega2) - .cop$rwProposalFrozen)) > 1e-14)
+		stop("score-sa random-walk proposal scales changed after the finite tuning phase")
+	if (useCop) {
+		.copEstepStarted <- proc.time()[["elapsed"]]
+		on.exit({
+			.cop$timing$estep <- .cop$timing$estep +
+				(proc.time()[["elapsed"]] - .copEstepStarted)
+		}, add=TRUE)
+	}
+	if (useCop && ncol(as.matrix(etaSlot <- matrix(0, 1, nb.etas))) !=
+	    population$dEta)
+		stop("copula prior: latent dim ", population$dEta,
+		     " but ", nb.etas, " etas with IIV")
+	jointConditioning <- useCop && population$dConditioning > 0L
+	if (jointConditioning) {
+		if (nrow(population$conditioning) != Dargs$N)
+			stop("copula prior: conditioning rows must equal the number of subjects")
+		.conditioningM <- population$conditioning[
+			rep(seq_len(Dargs$N), Uargs$nchains), , drop=FALSE]
+	}
 	
 	# "/" dans Matlab = division matricielle, selon la doc "roughly" B*INV(A) (et *= produit matriciel...)
 	
 	VK<-rep(c(1:nb.etas),2)
 	mean.phiM<-do.call(rbind,rep(list(mean.phi),Uargs$nchains))
 	phiM[,varList$ind0.eta]<-mean.phiM[,varList$ind0.eta]
+	if (useCop) {
+		Ueta <- if (jointConditioning) NULL else function(e) copulaUeta(e)
+	} else {
+		Ueta <- function(e) 0.5*rowSums(e*(e%*%somega))
+	}
 	
 	U.y<-compute.LLy(phiM,Uargs,Dargs,DYF,varList$pres)
 
 	etaM<-phiM[,varList$ind.eta]-mean.phiM[,varList$ind.eta,drop=FALSE]
 	phiMc<-phiM
-	for(u in 1:opt$nbiter.mcmc[1]) { # 1er noyau
-		etaMc<-if(useCop) copulaRandEta(Dargs$NM) else
+	conditionalKernel <- NULL
+	if (useCop && jointConditioning &&
+	    copulaIsFullGaussianVine(population$vine, population$d))
+		conditionalKernel <- copulaGaussianFremConditionalKernel(
+			.conditioningM, population$vine, population$margins,
+			population$dEta)
+	if (!is.null(conditionalKernel)) Ueta <- conditionalKernel$negative
+	invalidMovingCurrent <- if(movingEtaScore) !is.finite(Ueta(etaM)) else
+		rep(FALSE,nrow(etaM))
+	for(u in seq_len(opt$nbiter.mcmc[1])) { # 1er noyau
+		etaMc<-if(!is.null(conditionalKernel)) conditionalKernel$random()
+		else if(useCop) copulaRandEta(Dargs$NM,
+			if (jointConditioning) .conditioningM else NULL) else
 			matrix(rnorm(Dargs$NM*nb.etas),ncol=nb.etas)%*%chol.omega
 		phiMc[,varList$ind.eta]<-mean.phiM[,varList$ind.eta]+etaMc
 		Uc.y<-compute.LLy(phiMc,Uargs,Dargs,DYF,varList$pres)
 		deltau<-Uc.y-U.y
-		ind<-which(deltau<(-1)*log(runif(Dargs$NM)))
+		ind<-which(invalidMovingCurrent | deltau<(-1)*log(runif(Dargs$NM)))
 		etaM[ind,]<-etaMc[ind,]
 		U.y[ind]<-Uc.y[ind]
+		invalidMovingCurrent[ind]<-FALSE
 	}
-	U.eta<-Ueta(etaM)
+	U.eta<-if(multiCategoricalScore) rep(0, nrow(etaM)) else Ueta(etaM)
 	
 	# Second stage
 	
-	if(opt$nbiter.mcmc[2]>0) {
+	if(opt$nbiter.mcmc[2]>0 && !multiCategoricalScore) {
 		nt2<-nbc2<-matrix(data=0,nrow=nb.etas,ncol=1)
 		nrs2<-1
 		for (u in 1:opt$nbiter.mcmc[2]) {
@@ -68,12 +127,15 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 				nt2[vk2]<-nt2[vk2]+Dargs$NM
 			}
 		}
-		varList$domega2[,nrs2]<-varList$domega2[,nrs2]*(1+opt$stepsize.rw* (nbc2/nt2-opt$proba.mcmc))
+		if(adaptRandomWalk)
+			varList$domega2[,nrs2]<-varList$domega2[,nrs2]*(1+opt$stepsize.rw* (nbc2/nt2-opt$proba.mcmc))
 	}
 	
-	if(opt$nbiter.mcmc[3]>0) {
+	if(opt$nbiter.mcmc[3]>0 && !multiCategoricalScore) {
 		nt2<-nbc2<-matrix(data=0,nrow=nb.etas,ncol=1)
-		nrs2<-kiter%%(nb.etas-1)+2
+		nrs2<-if(scoreAlgorithm && kiter > proposalAdaptUntil)
+			.cop$rwBlockSizeFrozen %||% as.integer(nb.etas) else
+			kiter%%(nb.etas-1)+2
 		if(is.nan(nrs2)) nrs2<-1 # to deal with case nb.etas=1
 		for (u in 1:opt$nbiter.mcmc[3]) {
 			if(nrs2<nb.etas) {
@@ -104,7 +166,8 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 				nt2[vk2]<-nt2[vk2]+Dargs$NM
 			}
 		}
-		varList$domega2[,nrs2]<-varList$domega2[,nrs2]*(1+opt$stepsize.rw* (nbc2/nt2-opt$proba.mcmc))
+		if(adaptRandomWalk)
+			varList$domega2[,nrs2]<-varList$domega2[,nrs2]*(1+opt$stepsize.rw* (nbc2/nt2-opt$proba.mcmc))
 	}
 
 

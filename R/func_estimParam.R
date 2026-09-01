@@ -83,8 +83,11 @@ saemixPredictNewdata<-function(saemixObject, newdata, type=c("ipred", "ypred", "
   if(length(grep(c("ypred"),type))>0) {
     ind.eta<-saemixObject["model"]["indx.omega"]
     nb.etas<-length(ind.eta)
-    omega<-saemixObject["results"]["omega"]
-    chol.omega<-try(chol(omega[ind.eta,ind.eta]),silent=TRUE)
+    population<-attr(saemixObject,"saemix.copula",exact=TRUE)
+    if(is.null(population)) {
+      omega<-saemixObject["results"]["omega"]
+      chol.omega<-try(chol(omega[ind.eta,ind.eta]),silent=TRUE)
+    }
     
     etaM<-matrix(data=0,nrow=NM,ncol=nb.etas)
     ypred<-matrix(data=0,nrow=dim(XM)[1],ncol=saemixObject["options"]$nb.sim)
@@ -92,8 +95,11 @@ saemixPredictNewdata<-function(saemixObject, newdata, type=c("ipred", "ypred", "
     phiMc<-mean.phiM
     if(length(grep(c("ypred"),type))==1) {
       for(isim in 1:saemixObject["options"]$nb.sim) {
-        etaMc<-0.5*matrix(rnorm(NM*nb.etas),ncol=nb.etas)%*%chol.omega
-        phiMc[,ind.eta]<-mean.phiM[,ind.eta]+etaMc
+        if(is.null(population)) {
+          etaMc<-0.5*matrix(rnorm(NM*nb.etas),ncol=nb.etas)%*%chol.omega
+          phiMc[,ind.eta]<-mean.phiM[,ind.eta]+etaMc
+        } else phiMc[,ind.eta]<-populationRandPhi(
+          saemixObject,mean.phiM[,ind.eta,drop=FALSE])
         psiMc<-transphi(phiMc,saemixObject["model"]["transform.par"])
         fpred<-saemixObject["model"]["model"](psiMc, IdM, XM)
         ypred[,isim]<-fpred
@@ -182,8 +188,11 @@ estimateMeanParametersNewdata<-function(saemixObject) {
   nb.etas<-length(ind.eta)
   pop.par<-saemixObject["results"]["fixed.effects"]
   pop.par[saemixObject["results"]["indx.fix"]]<-transpsi(t(as.matrix(pop.par[saemixObject["results"]["indx.fix"]])),saemixObject["model"]["transform.par"])
-  omega<-saemixObject["results"]["omega"]
-  chol.omega<-try(chol(omega[ind.eta,ind.eta]),silent=TRUE)
+  population<-attr(saemixObject,"saemix.copula",exact=TRUE)
+  if(is.null(population)) {
+    omega<-saemixObject["results"]["omega"]
+    chol.omega<-try(chol(omega[ind.eta,ind.eta]),silent=TRUE)
+  }
   
   # Initialisation of phiM for new subjects
   # mean value for all would be phiM + Mcov*beta
@@ -229,8 +238,11 @@ estimateIndividualParametersNewdata<-function(saemixObject,type=c("mode","mean")
   nb.etas<-length(ind.eta)
   pop.par<-saemixObject["results"]["fixed.effects"]
   pop.par[saemixObject["results"]["indx.fix"]]<-transpsi(t(as.matrix(pop.par[saemixObject["results"]["indx.fix"]])),saemixObject["model"]["transform.par"])
-  omega<-saemixObject["results"]["omega"]
-  chol.omega<-try(chol(omega[ind.eta,ind.eta]),silent=TRUE)
+  population<-attr(saemixObject,"saemix.copula",exact=TRUE)
+  if(is.null(population)) {
+    omega<-saemixObject["results"]["omega"]
+    chol.omega<-try(chol(omega[ind.eta,ind.eta]),silent=TRUE)
+  }
   
   kt<-0
   mean.phi<-saemixObject["results"]["mean.phi"]
@@ -246,8 +258,14 @@ estimateIndividualParametersNewdata<-function(saemixObject,type=c("mode","mean")
     if (kt==100) 
       stop("Failed to find a valid initial parameter guess for the new data\n")
     end   
-    etaMc<-0.5*matrix(rnorm(NM*nb.etas),ncol=nb.etas)%*%chol.omega
-    phiMc[,ind.eta]<-mean.phiM[,ind.eta]+etaMc
+    if(is.null(population)) {
+      etaMc<-0.5*matrix(rnorm(NM*nb.etas),ncol=nb.etas)%*%chol.omega
+      phiMc[,ind.eta]<-mean.phiM[,ind.eta]+etaMc
+    } else {
+      phiMc[,ind.eta]<-populationRandPhi(
+        saemixObject,mean.phiM[,ind.eta,drop=FALSE])
+      etaMc<-phiMc[,ind.eta,drop=FALSE]-mean.phiM[,ind.eta,drop=FALSE]
+    }
     etaM[itest.phi,]<-etaMc[itest.phi,]
     phiM[itest.phi,]<-phiMc[itest.phi,]
     psiM<-transphi(phiM,saemixObject["model"]["transform.par"])

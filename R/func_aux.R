@@ -65,6 +65,8 @@
 #' @export map.saemix
 
 map.saemix<-function(saemixObject) {
+	if(!is.null(attr(saemixObject,"saemix.copula",exact=TRUE)))
+		return(mapCopula.saemix(saemixObject))
 # Compute the MAP estimates of the individual parameters PSI_i
   i1.omega2<-saemixObject["model"]["indx.omega"]
   iomega.phi1<-solve(saemixObject["results"]["omega"][i1.omega2,i1.omega2])
@@ -255,7 +257,7 @@ cutoff.res<-function(x,ares,bres) max(ares+bres*abs(x),.Machine$double.xmin)
 # Inverse of the normal cumulative distribution fct: using erfcinv from ?pnorm
 norminv<-function(x,mu=0,sigma=1)  mu-sigma*qnorm(x,lower.tail=FALSE)
 
-# Truncated gaussian distribution (verifie par rapport a definition de erf/matlab)
+# Truncated Gaussian distribution (legacy helper, also used for Wald p-values).
 normcdf<-function(x,mu=0,sigma=1)
   cutoff(pnorm(-(x-mu)/sigma,lower.tail=FALSE),1e-30)
 
@@ -313,7 +315,9 @@ transphi<-function(phi,tr) {
   i1<-which(tr==1) # log-normal
   psi[,i1]<-exp(psi[,i1])
   i2<-which(tr==2) # probit
-  psi[,i2]<-normcdf(psi[,i2])
+  # The probit support transform must be the literal Gaussian CDF.  In
+  # particular, do not inherit normcdf()'s historical Wald-p-value floor.
+  psi[,i2]<-pnorm(psi[,i2])
   i3<-which(tr==3) # logit
   psi[,i3]<-1/(1+exp(-psi[,i3]))
   if(is.null(dim(phi))) psi<-c(psi)
@@ -326,7 +330,7 @@ derivphi<-function(phi,tr) {
   i1<-which(tr==1) # log-normal
   psi[,i1]<-1/exp(phi[,i1])
   i2<-which(tr==2) # probit
-  psi[,i2]<-1/(sqrt(2*pi))*exp(-(phi[,i2]**2)/2)
+  psi[,i2]<-1/dnorm(phi[,i2])
   i3<-which(tr==3) # logit
   psi[,i3]<-2+exp(phi[,i3])+exp(-phi[,i3])
   if(is.null(dim(phi))) psi<-c(psi)
@@ -344,7 +348,7 @@ dtransphi<-function(phi,tr) {
   i1<-which(tr==1) # log-normal
   dpsi[,i1]<-exp(psi[,i1])
   i2<-which(tr==2) # probit
-  dpsi[,i2]<-1/dnorm(qnorm(dpsi[,i2]))   # derivee de la fonction probit, dqnorm <- function(p) 1/dnorm(qnorm(p))
+  dpsi[,i2]<-dnorm(psi[,i2])
   i3<-which(tr==3) # logit
   dpsi[,i3]<-1/(2+exp(-psi[,i3])+exp(psi[,i3]))
   if(is.null(dim(phi))) dpsi<-c(dpsi)
