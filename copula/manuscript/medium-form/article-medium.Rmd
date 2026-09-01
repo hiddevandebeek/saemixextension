@@ -60,9 +60,11 @@ likelihood [@nyberg2024; @jonsson2024].
 Standard FREM assumes that the combined parameter and covariate random effects
 are multivariate Normal. For covariates observed with negligible error, this
 working model can estimate means and covariances accurately under some
-non-Normal covariate distributions [@yngman2022]. It nevertheless specifies the
-entire population distribution, including marginal shape and conditional tail
-behaviour. These features are relevant when the fitted model is used for
+non-Normal covariate distributions [@yngman2022]. Recent FREM investigations
+also show that covariate-model misspecification can affect inclusion and
+omission bias [@nybergjonsson2025]. The Gaussian working model nevertheless
+specifies the entire population distribution, including marginal shape and
+conditional tail behaviour. These features are relevant when the fitted model is used for
 conditional prediction, simulation of virtual populations, integration over
 missing covariates, or extrapolation to sparsely represented covariate values.
 
@@ -84,8 +86,8 @@ parameter recovery and conditional prediction in simulation studies.
 
 ## FREM model
 
-For subject $i$ at design point $x_{ij}$, the nonlinear mixed-effects
-observation model is
+For subject $i$ at design point $x_{ij}$, write the nonlinear mixed-effects
+observation model as [@comets2017]
 
 \[
  y_{ij}=f(\psi_i,x_{ij})+g(\psi_i,\sigma,x_{ij})\epsilon_{ij},
@@ -124,7 +126,7 @@ specifies
  \end{pmatrix}.                                             \tag{4}
 \]
 
-Equation (4) is the standard FREM specification [@yngman2022]. Let
+Equation (4) is the standard FREM specification [@savic2011; @yngman2022]. Let
 $\Omega_{\mathrm{par,cov}}\in\R^{p\times q}$ and
 $\Omega_{\mathrm{cov,par}}=\Omega_{\mathrm{par,cov}}^{\mathsf T}$.
 The covariate-effect matrix and unexplained parameter variability (UPV) are
@@ -226,8 +228,14 @@ Marginal and dependence parameters are therefore coupled through nonlinear
 functions of the latent data, and a parameter-independent finite statistic
 $S(Y,Z)$ is not generally available. The observed-data likelihood and the EM
 identity remain valid, but the usual finite-statistic SAEM recursion and its
-convergence theorem cannot simply be carried over. The likelihood score instead
-provides a stochastic-approximation target through Delyon et al. equation (74).
+convergence theorem cannot simply be carried over; the curved-exponential
+condition is a recognized bottleneck for SAEM [@debavelaere2021]. One possible
+workaround adds fixed-variance Gaussian latent variables to exponentialize the
+model, but then maximizes a perturbed likelihood whose approximation and
+numerical behaviour depend on that variance [@allassonniere2010;
+@debavelaere2021]. Here the likelihood score of the original, unperturbed model
+is used instead, through the stochastic-gradient recursion proposed by Younes
+and presented as equation (74) by Delyon et al. [@younes1989; @delyon1999].
 When all margins are Normal, the ordinary Gaussian FREM finite-statistic
 representation is recovered.
 
@@ -302,15 +310,22 @@ and the parameter update is
 Adaptation of the positive diagonal metric and proposal scales is restricted to
 a finite initial sequence; these quantities are subsequently held fixed. The
 gain sequence is
-$\gamma_k=\gamma_0(k+k_0)^{-a}$ with $a>3/4$. Marginal families, category
+$\gamma_k=\gamma_0(k+k_0)^{-a}$ with $3/4<a\leq1$. Marginal families, category
 order, copula structure and all other discrete model choices are specified
 before recursion (10) begins.
 
-Equation (10) is the internal-coordinate, projected, preconditioned and
-multiple-chain extension of Delyon et al. equation (74),
+Equation (10) is a controlled-Markov, internal-coordinate, projected,
+preconditioned and multiple-chain extension of the Younes stochastic-gradient
+recursion presented as Delyon et al. equation (74),
 $\theta_k=\theta_{k-1}+\gamma_k\partial_\theta
 \log f(Z_k;\theta_{k-1})$. The coordinate transformations and fixed
-positive-definite metric leave the stationary points unchanged.
+positive-definite metric leave the stationary points unchanged. Because the
+implemented chains persist between iterations, their draws are Markovian and
+do not satisfy the conditional-independence assumption used in Delyon et al.'s
+direct analysis of equation (74). Appendix B replaces that martingale-difference
+argument by the Poisson-equation decomposition for controlled-Markov stochastic
+approximation, building on the SAEM--MCMC construction and its later extensions
+[@kuhn2004; @fort2016].
 
 Every stochastic move is either an exact conditional draw or a Metropolis-
 Hastings transition with the current individual conditional law as invariant
@@ -398,7 +413,7 @@ covariate margins and Gaussian dependence during screening,
  \frac{g_{mi}}{g_{0i}}
  =E_{\pi_{0i}}\!\left\{\frac{f_{mi}(Z_i)}{f_{0i}(Z_i)}\right\}
  =E_{\pi_{0i}}\!\left\{
-   \frac{p_m(\eta_i,c_i)}{p_0(\eta_i,c_i)}\right\}.       \tag{13a}
+   \frac{p_m(\eta_i,c_i)}{p_0(\eta_i,c_i)}\right\}.       \tag{14}
 \]
 
 Thus full posterior draws, unlike EBEs, retain individual uncertainty and give
@@ -412,10 +427,15 @@ second pool gives the validation criterion
    \frac{1}{M}\sum_{r=1}^M
    \frac{p_m(\eta_i^{(r)},c_i)}
         {p_0(\eta_i^{(r)},c_i)}\right]
- -(k_m-k_0)\log N,                                      \tag{13b}
+ -(k_m-k_0)\log N,                                      \tag{15}
 \]
 
 which is the candidate's validation BIC advantage relative to the incumbent.
+Under draws from $\pi_{0i}$, the inner importance average is unbiased for
+$g_{mi}/g_{0i}$, but its logarithm is downward-biased by Jensen's inequality.
+The incumbent ratio equals one exactly and has no corresponding Monte Carlo bias, so the finite-pool criterion
+is conservative toward retaining the incumbent; batch-means Monte Carlo
+standard errors describe sampling variability but do not remove this bias.
 The current candidate set comprises centred Normal, Student and Laplace eta
 margins. All combinations up to a prespecified cap are evaluated while the
 incumbent Gaussian dependence and non-eta margins are held fixed. Posterior-
@@ -423,7 +443,11 @@ chain ESS and acceptance, subject-level importance ESS, batch-means Monte Carlo
 standard error and separation of the leading criterion from its runner-up are
 reported. An unresolved screen is not accepted automatically; posterior
 sampling must be increased or the scientifically prespecified candidate set
-reduced.
+reduced. In particular, a Student candidate screened from a Normal incumbent
+can have unbounded importance-weight variance because its likelihood ratio
+grows in the tails. The subject-level importance ESS is therefore an operative
+overlap guard, although a finite empirical ESS cannot prove existence of a
+second moment.
 
 The selected family combination is subsequently frozen and passed to a fresh
 score stochastic-approximation fit, which re-estimates population locations,
@@ -492,7 +516,7 @@ $V_{ij}\in(0,1)$ and
 
 \[
  U_{ij}=b_{j,k-1}+V_{ij}\pi_{jk},\qquad
- b_{jk}=\sum_{r\leq k}\pi_{jr}.                           \tag{14}
+ b_{jk}=\sum_{r\leq k}\pi_{jr}.                           \tag{16}
 \]
 
 Integrating $V_{ij}$ recovers the category mass. This construction supports any
@@ -505,7 +529,7 @@ analogous fixed-percentile representation
 
 \[
  W_{ij}\in(0,1),\qquad
- X_{ij}=F_j^{-1}(W_{ij};\alpha_j).                         \tag{15}
+ X_{ij}=F_j^{-1}(W_{ij};\alpha_j).                         \tag{17}
 \]
 
 For a parameter coordinate with parameter-dependent support, the complete-data
@@ -765,9 +789,9 @@ from the joint FREM likelihood.
 
 The lack of a general finite sufficient statistic changes the stochastic-
 approximation step but not the likelihood being estimated. Population
-parameters were updated with the controlled-Markov stochastic-gradient
-algorithm described by Delyon et al. Fisher's identity shows that its mean
-field equals the gradient of the specified observed-data log likelihood. The
+parameters were updated with the controlled-Markov extension of the Younes
+stochastic-gradient recursion presented by Delyon et al. Fisher's identity
+shows that its mean field equals the gradient of the specified observed-data log likelihood. The
 convergence result is conditional on the stated stability, drift, regularity
 and critical-value assumptions. The reported numerical diagnostics establish
 that the finite-run stabilization criteria were satisfied, but do not
@@ -971,11 +995,17 @@ E_{\pi_{0i}}\!\left(\frac{f_{mi}}{f_{0i}}\right)
 \]
 
 When only the eta population distribution changes, the common response density
-cancels from $f_{mi}/f_{0i}$, giving (13a). The Gaussian incumbent is positive
+cancels from $f_{mi}/f_{0i}$, giving (14). The Gaussian incumbent is positive
 on the real eta space used by the current Normal, Student and Laplace
 candidates. Equation (A5) establishes the likelihood identity, but not finite-
 sample stability of its importance estimator. Finite second moments, adequate
-tail overlap and sufficient MCMC mixing remain numerical requirements.
+tail overlap and sufficient MCMC mixing remain numerical requirements. In
+particular, when the incumbent eta margin is Normal and a candidate is Student,
+the likelihood ratio can have an infinite second moment under the incumbent
+posterior. The reported subject-level importance ESS detects severe realized
+weight concentration but cannot certify the missing moment. Moreover, although
+the importance average is unbiased for the likelihood ratio, applying the
+logarithm produces the conservative Jensen bias described after (15).
 Optimizing candidate parameters and validating their ranking on independently
 generated posterior pools separates fitting noise from the reported comparison.
 Once a family is selected, the posterior pools are discarded and a fresh fixed-
@@ -1032,7 +1062,8 @@ martingale term, a Poisson-equation remainder and numerical error:
   +e_{k+1}+r^{\rm P}_{k+1}+r^{\rm num}_{k+1}.              \tag{B3}
 \]
 
-Here is the precise mapping to Fort et al. [@fort2016]. On every visited
+Here is the precise mapping to controlled-Markov stochastic approximation
+[@gukong1998; @guli1998; @kuhn2004; @fort2016]. On every visited
 compact parameter set, assume their H1--H2 with a drift function $W$: the
 partially marginalized score is uniformly $W$-bounded, each
 $P_\vartheta$ has unique invariant distribution $\Pi_\vartheta$, the kernels
@@ -1062,9 +1093,9 @@ have the bounds used by Fort et al. Proposition 4.11. Their H6 requires a
 power-law gain exponent satisfying
 
 \[
- a>\max\!\left\{\frac1p,
+ \max\!\left\{\frac1p,
  \frac{1+(\alpha\wedge\upsilon)/p}
-      {1+(\alpha\wedge\upsilon)}\right\}.                \tag{B6}
+      {1+(\alpha\wedge\upsilon)}\right\}<a\leq1.        \tag{B6}
 \]
 
 For $p\geq2$ and $\alpha=\upsilon=1$, the implemented $a=0.80>0.75$
@@ -1110,9 +1141,9 @@ $P(A_k\geq\delta/2)\to0$, so the probability of the intersection is zero.
 A countable sequence of positive rational $\delta$ proves $A_k\to0$ almost
 surely on the no-exit tail. Thus C-iv holds. Proposition 4.6 then yields
 $d(\vartheta_k,\mathcal L)\to0$ almost surely. The finite prefix cannot change
-the limit set. This is a conditional stationary-set result for Delyon et al.'s
-stochastic-gradient equation (74), not an invocation of their finite-statistic
-SAEM Theorem 5 or 8.
+the limit set. This is a conditional stationary-set result for the Younes
+stochastic-gradient recursion presented as Delyon et al. equation (74), not an
+invocation of their finite-statistic SAEM Theorem 5 or 8.
 
 # Numerical score error
 
