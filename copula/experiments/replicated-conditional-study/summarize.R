@@ -35,12 +35,25 @@ estimates <- do.call(rbind, lapply(results, `[[`, "estimates"))
 
 interval <- function(x) c(lower = unname(quantile(x, .025)),
   median = median(x), upper = unname(quantile(x, .975)))
-curveSummary <- do.call(rbind, lapply(split(curves,
-  interaction(curves$arm, curves$probability, drop = TRUE)), function(x) {
-    value <- interval(x$medianCL)
-    data.frame(arm = x$arm[1L], probability = x$probability[1L],
-      CRP = x$CRP[1L], t(value))
-  }))
+summarize_curve <- function(value) do.call(rbind, lapply(split(value,
+  interaction(value$arm, value$probability, drop = TRUE)), function(x) {
+  limits <- interval(x$medianCL)
+  data.frame(arm = x$arm[1L], probability = x$probability[1L],
+    CRP = x$CRP[1L], t(limits))
+}))
+curveSummary <- summarize_curve(curves)
+curve50 <- summarize_curve(subset(curves, replicate <= 50L))
+curveStability <- merge(curve50, curveSummary,
+  by = c("arm", "probability", "CRP"), suffixes = c("_50", "_all"))
+for (name in c("lower", "median", "upper"))
+  curveStability[[paste0("change_", name)]] <-
+    curveStability[[paste0(name, "_all")]] -
+    curveStability[[paste0(name, "_50")]]
+stabilitySummary <- do.call(rbind, lapply(split(curveStability,
+  curveStability$arm), function(x) data.frame(arm = x$arm[1L],
+    max_abs_median_change = max(abs(x$change_median)),
+    max_abs_lower_change = max(abs(x$change_lower)),
+    max_abs_upper_change = max(abs(x$change_upper)))))
 vpcSummary <- do.call(rbind, lapply(split(vpc,
   interaction(vpc$arm, vpc$quantile, vpc$time, drop = TRUE)), function(x) {
     value <- interval(x$value)
@@ -70,6 +83,10 @@ pairedSummary <- data.frame(n = nrow(paired),
 
 write.csv(curves, file.path(root, "curves_all.csv"), row.names = FALSE)
 write.csv(curveSummary, file.path(root, "curves_summary.csv"), row.names = FALSE)
+write.csv(curveStability, file.path(root, "curve_stability_50_vs_all.csv"),
+  row.names = FALSE)
+write.csv(stabilitySummary, file.path(root,
+  "curve_stability_summary_50_vs_all.csv"), row.names = FALSE)
 write.csv(vpc, file.path(root, "vpc_all.csv"), row.names = FALSE)
 write.csv(vpcSummary, file.path(root, "vpc_summary.csv"), row.names = FALSE)
 write.csv(metrics, file.path(root, "metrics_all.csv"), row.names = FALSE)
@@ -117,3 +134,4 @@ gridExtra::grid.arrange(pCurve, pMetric, nrow = 1L, widths = c(1.45, 1))
 dev.off()
 print(metricSummary)
 print(pairedSummary)
+print(stabilitySummary)
