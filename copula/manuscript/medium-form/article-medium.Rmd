@@ -2,35 +2,29 @@
 title: "Flexible-margin Gaussian-copula full random-effects models: likelihood estimation and posterior-based margin selection"
 author: "H. van de Beek$^{1}$"
 abstract: |
-  Full random-effects modelling (FREM) jointly describes individual parameters
-  and covariates using a multivariate Normal population distribution. We extend
-  FREM by combining Gaussian dependence with flexible continuous marginal
-  distributions for parameter random effects and continuous or ordered
-  categorical margins for covariates. Because parameter random effects are
-  latent, their marginal families cannot be selected directly from the observed
-  data. We therefore propose a screen-and-refit likelihood workflow: a Normal-eta
-  incumbent supplies full individual posterior samples, candidate eta families
-  are ranked on independent training and validation pools, and the selected
-  families are frozen before a fresh fit. For each fixed family specification,
-  population locations, marginal parameters, dependence parameters and
-  residual error are estimated jointly by controlled-Markov likelihood-score
-  stochastic approximation. The model reduces to Gaussian FREM when all
-  margins are Normal and permits missing covariates. Posterior and direct
-  observed-likelihood family rankings agreed in all 24 informative datasets and
-  in 22 of 24 weak-information datasets with 2,000 draws; increasing the two
-  unresolved comparisons to 20,000 draws recovered agreement.
-  In 400 simulated nonlinear mixed-effects datasets, structural-parameter bias
-  remained within 0.47%. Relative to Gaussian FREM, mean differences in
-  observed log likelihood were 4.30--9.41 under non-Gaussian data-generating
-  distributions and -0.06 under a Gaussian data-generating distribution. Among
-  In 200 independent high-CRP prediction datasets, flexible margins had lower
-  VPC log-RMSE in 174; median RMSE was 0.085 versus 0.336 for Gaussian FREM, and
-  the mean paired difference was 0.246 (95% CI 0.219--0.272). These results
-  indicate that latent margin selection can be separated from fixed-model
-  likelihood estimation and that marginal assumptions can materially affect
-  conditional prediction. The fitted conditional model has an exact
-  conventional FFEM representation when parameter margins are Normal and an
-  exact conditional generative representation otherwise.
+  Full random-effects modelling (FREM) jointly describes parameter and covariate
+  random effects by a multivariate Normal population distribution. We extend
+  FREM by combining Gaussian dependence with flexible marginal distributions
+  defined directly for the natural individual parameters and covariates. The
+  internal `saemix` transformation is retained only as a reversible coordinate
+  map with its exact Jacobian. Because individual parameters are latent, we use
+  a screen-and-refit workflow: a standard fit supplies full individual
+  posterior samples, support-compatible natural-scale families are ranked on
+  independent pools, and a resolved selection starts a fresh fit; unresolved
+  cases retain the standard family. For each fixed specification, population,
+  marginal, dependence and residual parameters are estimated jointly by
+  controlled-Markov likelihood-score stochastic approximation with a finitely
+  learned empirical-information preconditioner. In 400 fixed-family nonlinear
+  mixed-effects datasets, structural bias remained within 0.47%. In a separate
+  200-dataset automatic study generated with Gamma clearance, free selection
+  chose Gamma 149 times, Weibull 17 times and lognormal 34 times, including 27
+  conservative standard retentions. The free procedure improved observed log
+  likelihood in 163 datasets and reduced extreme-VPC log-RMSE in 172; median
+  extreme error was 0.293 versus 1.078 for standard lognormal clearance. In 200
+  conditional-prediction datasets, flexible covariate margins reduced median
+  VPC log-RMSE from 0.336 to 0.085. Thus natural-scale marginal assumptions can
+  be learned separately from fixed-model likelihood estimation and materially
+  affect population and conditional tail prediction.
 output:
   pdf_document:
     number_sections: false
@@ -77,26 +71,30 @@ missing covariates, or extrapolation to sparsely represented covariate values.
 
 A copula permits the marginal distributions to be specified separately from
 their dependence [@sklar1959; @joe1996]. We extend FREM by combining a Gaussian
-copula with flexible continuous margins for parameter random effects and
-continuous or ordered categorical margins for covariates. The multivariate
-Normal FREM model is recovered when all margins are Normal. Continuous
-covariate margins can be screened directly from their observed values, whereas
-the eta margins cannot because the individual random effects are latent.
-Selecting their families from empirical Bayes estimates would ignore individual
-uncertainty and shrinkage.
+copula with flexible continuous margins for the natural individual parameters
+and continuous or ordered categorical margins for covariates. The `saemix`
+parameter transformation remains a computational coordinate map; it does not
+determine the marginal family. Thus a Gamma clearance remains Gamma distributed
+whether the internal coordinate is identity or logarithmic. Standard Normal or
+lognormal parameter models are retained as special cases. Continuous covariate
+margins can be screened from their observed values, whereas individual-parameter
+margins require the response data because those parameters are latent. Their
+screening therefore uses full individual conditional distributions rather than
+point summaries.
 
 The proposed workflow therefore separates discrete family selection from
-continuous likelihood estimation. A Normal-eta incumbent is fitted first. Full
-draws from its individual conditional distributions are then used to screen
-candidate eta families by an exact observed-likelihood ratio identity. The
-selected families are frozen, and all continuous population and residual-error
-parameters are re-estimated in a fresh fit. At no point are eta families changed
-inside the stochastic-approximation recursion.
+continuous likelihood estimation. A standard Normal/lognormal incumbent is
+fitted first. Full draws from its individual conditional distributions are
+mapped to the natural parameter scale and used to screen registered families
+compatible with the declared support by an exact observed-likelihood ratio
+identity. A resolved selection starts a fresh fit; otherwise the standard family
+is retained. Family names remain fixed within the final recursion, while all
+continuous parameters remain free.
 
 The objectives of this work were to define the flexible-margin FREM model and
 its observed-data likelihood, establish a likelihood-score estimator for any
 fixed admissible margin specification, develop posterior-based automatic
-eta-margin selection, derive the corresponding conditional and FFEM
+natural-parameter margin selection, derive the corresponding conditional and FFEM
 representations, and evaluate estimation and conditional prediction in
 simulation studies.
 
@@ -171,9 +169,9 @@ covariate coefficients, and its UPV representation.
 
 ### Flexible-margin Gaussian-copula FREM
 
-Let $X_i=(\eta_{\mathrm{par},i},c_i)$ contain the $d$ population coordinates.
+Let $X_i=(\psi_i,c_i)$ contain the natural individual parameters and covariates.
 For continuous coordinate $j$, write $F_j(\cdot;\alpha_j)$ and
-$f_j(\cdot;\alpha_j)$ for its CDF and density and define
+$f_j(\cdot;\alpha_j)$ for its natural-scale CDF and density and define
 
 \[
  \xi_j=\Phi^{-1}\{F_j(x_j;\alpha_j)\}.
@@ -189,10 +187,23 @@ continuous population density is
  \prod_{j=1}^d f_j(x_j;\alpha_j).                           \tag{7}
 \]
 
+The model transformation $\phi=h(\psi)$ is not part of the marginal-family
+definition. When computation uses $\phi$, the equivalent density is
+
+\[
+ p_\phi(\phi)=p_\psi\{h^{-1}(\phi)\}
+ \left|J_{h^{-1}}(\phi)\right|,                             \tag{7b}
+\]
+
+so identity and logarithmic storage give the same natural-parameter likelihood.
+For example, a Gamma clearance remains Gamma; it is not a Gamma random effect
+followed by exponentiation.
+
 We parameterize $R$ by a fixed regular vine with Gaussian pair copulas; the vine
 structure is not estimated during the stochastic-approximation recursion. When
-all margins are Normal on their modelled scales, (7) reduces
-exactly to the error-free Gaussian FREM population model (2)--(4), with
+the natural margins induce Normal additive effects under the declared maps
+(Normal under identity and lognormal under a log map), (7) reduces exactly to
+the error-free Gaussian FREM population model (2)--(4), with
 $\Omega_{\mathrm{FREM}}$ obtained from the marginal standard deviations and
 $R$. This error-free formulation is the zero-covariate-residual limit of the
 conventional NONMEM/PsN formulation, which uses a small fixed residual variance for covariate
@@ -200,11 +211,12 @@ responses [@yngman2022; @jonsson2024].
 
 Let $\theta=(\mu,\alpha,\rho,\sigma)$ denote the unknown parameter vector.
 Here $\alpha$ contains the parameters of the marginal distributions of
-$\eta_{\mathrm{par}}$ and $c$, including $\mu_c$; $\rho$ parameterizes $R$; and $\sigma$
-contains the residual-error parameters. When all margins are Normal,
-the marginal scale parameters together with $\rho$ are equivalently represented
-by $\operatorname{vec}(\Omega_{\mathrm{FREM}})$; the covariate locations
-$\mu_c$ remain separate.
+$\psi$ and $c$, including their identified location anchors; $\rho$ parameterizes
+$R$; and $\sigma$ contains the residual-error parameters. When the declared
+maps yield Gaussian additive parameter and covariate effects, the marginal
+scales together with $\rho$ are equivalently represented by
+$\operatorname{vec}(\Omega_{\mathrm{FREM}})$; the covariate locations $\mu_c$
+remain separate.
 
 The corresponding FREM effect summaries live naturally on the latent-score
 scale. Partition $R$ into individual-parameter and covariate blocks. Then
@@ -230,17 +242,16 @@ conditional distribution.
 ## Estimation and margin-selection workflow
 
 The complete workflow contains four steps. First, continuous covariate margins
-are either prespecified or screened by marginal AIC from Normal, lognormal,
-Gamma and Weibull candidates using their observed values; the selected families
-are then fixed. Categorical margins and their ordering are declared from their
-scientific meaning. Second,
-a Normal-eta Gaussian-copula incumbent is fitted to the joint observed-data
-likelihood. This is ordinary Gaussian FREM only when the covariate margins are
-also Normal. Third, full draws from the incumbent individual conditional
-distributions are used to rank candidate eta-margin families. Fourth, the
-selected family combination is frozen and a fresh fixed-family model is fitted,
-re-estimating its population, dependence and residual-error parameters. A user
-may bypass screening by prespecifying scientifically justified margins.
+are either prespecified or screened from their observed values; categorical
+margins and their ordering follow their scientific meaning. Second, a standard
+Normal/lognormal Gaussian-copula incumbent is fitted. Third, full draws from its
+individual conditional distributions are mapped to the natural parameter scale
+and used to rank registered families compatible with each declared support.
+Fourth, a resolved family combination starts a fresh fixed-family fit that
+re-estimates all population, dependence and residual-error parameters. An
+unresolved screen is repeated with a larger posterior pool and otherwise retains
+the standard model. Users may restrict screening to selected parameters or
+bypass it by prespecifying scientifically justified margins.
 
 This separation is essential: the fixed-family estimator has one unchanged
 state space and likelihood throughout its recursion, while family selection is
@@ -321,8 +332,8 @@ numerical behaviour depend on that variance [@allassonniere2010;
 @debavelaere2021]. Here the likelihood score of the original, unperturbed model
 is used instead, through the stochastic-gradient recursion proposed by Younes
 and presented as equation (74) by Delyon et al. [@younes1989; @delyon1999].
-When all margins are Normal, the ordinary Gaussian FREM finite-statistic
-representation is recovered.
+When the declared maps yield Gaussian additive effects, the ordinary Gaussian
+FREM finite-statistic representation is recovered.
 
 ### Controlled-Markov approximation of the likelihood score
 
@@ -347,9 +358,13 @@ and the parameter update is
  \{\vartheta_k+\gamma_{k+1}A_k\widehat H_{k+1}\}.         \tag{10}
 \]
 
-Adaptation of the positive diagonal metric and proposal scales is restricted to
-a finite initial sequence; these quantities are subsequently held fixed. The
-gain sequence is
+During a finite learning sequence, the diagonal empirical score-information
+estimate is updated from squared stochastic-score coordinates. The
+preconditioner is
+$A_k=\{\operatorname{diag}(\widehat I_k)+\lambda I\}^{-1}$ with bounded
+eigenvalues; it replaces a family-specific manual score multiplier and
+approximates inverse-information scaling. Both $A_k$ and proposal scales are
+subsequently held fixed. The gain sequence is
 $\gamma_k=\gamma_0(k+k_0)^{-a}$ with $3/4<a\leq1$. Marginal families, category
 order, copula structure and all other discrete model choices are specified
 before recursion (10) begins.
@@ -423,12 +438,12 @@ stationary-set result, not a global-maximum claim and not an application of the
 finite-statistic SAEM Theorems 5 or 8. Appendix B states and maps the complete
 assumptions [@andrieu2005; @fort2016].
 
-### Posterior-based automatic eta-margin selection
+### Posterior-based automatic natural-margin selection
 
-Eta-margin families are discrete model choices and are not changed during
-recursion (10). They may instead be screened before a fresh fixed-model fit by
-reusing the complete individual posterior distribution from a fitted Normal-eta
-incumbent. Let $f_{0i}$ and $g_{0i}$ denote the incumbent complete- and
+Marginal families are discrete model choices and are not changed during
+recursion (10). They are screened before a fresh fixed-model fit by reusing the
+complete individual posterior distribution from a standard incumbent. Let
+$f_{0i}$ and $g_{0i}$ denote the incumbent complete- and
 observed-data likelihoods, and let
 $\pi_{0i}(z)=f_{0i}(z)/g_{0i}$ be its individual conditional distribution. For
 a candidate model $m$ with the same observation model, population locations,
@@ -438,7 +453,7 @@ covariate margins and Gaussian dependence during screening,
  \frac{g_{mi}}{g_{0i}}
  =E_{\pi_{0i}}\!\left\{\frac{f_{mi}(Z_i)}{f_{0i}(Z_i)}\right\}
  =E_{\pi_{0i}}\!\left\{
-   \frac{p_m(\eta_i,c_i)}{p_0(\eta_i,c_i)}\right\}.       \tag{14}
+   \frac{p_m(\psi_i,c_i)}{p_0(\psi_i,c_i)}\right\}.       \tag{14}
 \]
 
 Unlike EBEs, these draws retain individual uncertainty. Candidate parameters
@@ -448,13 +463,16 @@ validation BIC advantage
 \[
  2\sum_{i=1}^N\log\!\left[
    \frac{1}{M}\sum_{r=1}^M
-   \frac{p_m(\eta_i^{(r)},c_i)}
-        {p_0(\eta_i^{(r)},c_i)}\right]
+   \frac{p_m(\psi_i^{(r)},c_i)}
+        {p_0(\psi_i^{(r)},c_i)}\right]
  -(k_m-k_0)\log N,                                      \tag{15}
 \]
 
-relative to the incumbent. The screened set is centred Normal, Student and
-Laplace, with incumbent dependence and non-eta margins held fixed. MCMC ESS,
+relative to the incumbent. Candidate families are supplied by a support-based
+registry; the present implementation includes Normal, Student and Laplace on
+the real line and lognormal, Gamma and Weibull on the positive line. The model
+transformation does not restrict this registry. Incumbent dependence and
+non-screened margins are held fixed during ranking. MCMC ESS,
 importance ESS, batch-means Monte Carlo error and ranking separation determine
 whether the result is resolved. The log of the importance average has
 conservative Jensen bias toward the incumbent, and Normal-to-Student weights can
@@ -462,8 +480,8 @@ have infinite variance; empirical ESS detects concentration but cannot prove a
 finite second moment. Unresolved screens require more draws, fewer candidates
 or direct comparison of refitted leaders.
 
-The selected families are frozen for a fresh score fit that re-estimates all
-continuous population, dependence and residual-error parameters. Thus (13)
+The selected family names are held fixed for a fresh score fit that re-estimates
+all continuous population, dependence and residual-error parameters. Thus (13)
 applies to that fixed-model fit, not to selection itself. Appendix A proves
 (14) and gives the estimator qualifications.
 
@@ -471,8 +489,8 @@ applies to that fixed-model fit, not to selection itself. Appendix A proves
 
 For a selected covariate subset $S$, let $z_{iS}$ contain the corresponding
 Gaussian scores and calculate $B_{\xi,S}$ and
-$R'_{\mathrm{par},S}$ from the relevant blocks of $R$. If the parameter random-
-effect margins are Normal, the exact FFEM is
+$R'_{\mathrm{par},S}$ from the relevant blocks of $R$. If the transformed
+parameter coordinates are Gaussian, the exact FFEM is
 
 \[
  \phi_i=C_i\mu+\beta_{z,S}z_{iS}+\eta'_{iS},\qquad
@@ -485,15 +503,15 @@ D_{\mathrm{par}}$. Covariates are fixed inputs whose fitted CDFs produce
 $z_{iS}$; all-Normal covariate margins recover the usual raw-scale FREM formulas
 [@yngman2022].
 
-For non-Normal parameter random effects, a conventional additive-Normal FFEM
-is not generally equivalent. Let $Q_\eta$ apply the fitted parameter-margin
-quantile functions componentwise and choose $L_S$ such that
+For other natural-parameter margins, a conventional additive-Normal FFEM is not
+generally equivalent. Let $Q_\psi$ apply the fitted natural-parameter quantile
+functions componentwise and choose $L_S$ such that
 $L_SL_S^{\mathsf T}=R'_{\mathrm{par},S}$. The exact conditional representation
 is
 
 \[
- \phi_i=C_i\mu+
- Q_\eta\!\left[\Phi\!\left\{
+ \psi_i=
+ Q_\psi\!\left[\Phi\!\left\{
  B_{\xi,S}z_{iS}+L_S\varepsilon_i\right\}\right],
  \qquad \varepsilon_i\sim N(0,I).
 \]
@@ -529,19 +547,23 @@ reevaluated with independent 5,000-draw importance samples. The complete
 parameters, dependence matrix, seeds and stabilization criteria are recorded in
 the reproducibility bundle.
 
-### Automatic eta-margin selection
+### Automatic natural-parameter margin selection
 
-The posterior identity was evaluated in an additive latent model,
-$Y_i=\eta_i+\epsilon_i$, where the direct observed likelihood is available
-analytically for Normal and Laplace eta margins. Twelve datasets per generating
-family were simulated with $N=100$, eta standard deviation 0.45 and residual
-standard deviation 0.25. A fitted Normal-eta incumbent supplied 2,000 posterior
-draws per subject for each of two independently generated pools. Candidate
-scale parameters were fitted on the first pool and family rankings were
-evaluated on the second. A weak-information setting used residual standard
-deviation 0.60; discordant close comparisons were repeated with 20,000 draws
-per subject, providing an exact likelihood benchmark independent of the
-fixed-family NLME study.
+Two hundred independent one-compartment datasets contained $N=180$ subjects
+with eight observations each. Volume was lognormal; clearance was generated
+directly as Gamma with shape 2.5 and geometric mean 3.5. The latent Gaussian
+score correlation was 0.35 and proportional residual SD was 0.12. Each dataset
+first received a standard 1,500-iteration lognormal fit. Volume remained
+standard, while positive clearance candidates (lognormal, Gamma and Weibull)
+were fitted from 700 posterior draws per subject and ranked on an independent
+700-draw pool. An unresolved ranking was repeated with 2,000 draws; persistent
+uncertainty retained the standard family. A resolved selection received a
+fresh 1,500-iteration fit initialized numerically, but with new SA and MCMC
+state. Independent 2,500-draw importance samples compared observed likelihoods.
+For each fitted population, 100,000 simulated subjects supplied clearance
+density, upper-tail probabilities and response percentiles at the 1st, 10th,
+50th, 90th and 99th levels. Predictive error was log-RMSE against the generating
+quantiles.
 
 ### Conditional prediction
 
@@ -595,39 +617,40 @@ close to generating values: estimated lognormal sdlog values were 0.239 and
 absolute differences 0.0065 (shape) and 0.0101 (scale). Maximum absolute mean
 correlation bias was 0.022.
 
-Flexible margins had larger joint likelihood in 285/300 non-Gaussian datasets.
+Flexible margins had larger observed-data likelihood in 285/300 non-Gaussian datasets.
 Most mean improvement arose from the covariate-density component (4.01, 4.15
 and 8.58), with conditional-response contributions 0.29, 0.45 and 0.83. The
 models are non-nested and the independent importance-sampling comparisons are
 descriptive; by (8a), joint improvement alone does not establish improved
 $p(Y\mid c)$.
 
-## Automatic eta-margin selection
+## Automatic natural-parameter margin selection
 
+The free procedure selected Gamma clearance in 149 datasets, Weibull in 17 and
+lognormal in 34; the last group included 27 conservative standard retentions
+after unresolved screening. Observed log likelihood was higher in 163/200
+paired datasets and exceeded twice the combined Monte Carlo error in 148.
+Median gain was 4.69 (2.5th--97.5th percentiles -0.56--13.00). Median fitted
+Gamma shape was 2.46 among Gamma selections (generating value 2.5).
 
-\begin{table}[H]
+The free procedure had lower overall and extreme VPC log-RMSE in 172/200
+datasets. Median overall error was 0.219 versus 0.689 for standard lognormal
+clearance; median 1st/99th-percentile error was 0.293 versus 1.078. The median
+fitted probability $P(CL>8)$ was 0.106 for free margins, 0.108 for lognormal
+clearance and 0.100 under generation (Figure 1). Median screening time was 95.7
+seconds and the selected-family refit took 2.05 times the standard-fit runtime.
+
+\begin{figure}[H]
 \centering
-\caption{Agreement of posterior eta-margin selection with the analytically
-available direct observed-likelihood ranking. Agreement concerns the ranking,
-not necessarily recovery of the generating family in a finite dataset.}
-\small
-\begin{tabular}{llrr}
-\toprule
-Information & Generating family & Datasets & Ranking agreement\\
-\midrule
-Informative & Normal  & 12 & 12/12\\
-Informative & Laplace & 12 & 12/12\\
-Weak, 2,000 draws & Normal or Laplace & 24 & 22/24\\
-Weak, targeted 20,000-draw rerun & Discordant subset & 2 & 2/2\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-In informative data, posterior log-likelihood RMSE was below 0.001 for Normal
-and 0.071 for Laplace candidates. Under weak information, the two initial
-discordances had small direct advantages (0.164 and 0.114) and poor overlap;
-20,000 draws recovered both direct rankings. Automatic decisions were therefore
-accepted only when ranking and overlap diagnostics were resolved.
+\includegraphics[width=0.98\linewidth]{figures/figure2_natural_margin_200.png}
+\caption{Natural-parameter marginal validation across 200 independent datasets.
+(A) Generating Gamma clearance density (black) and median fitted densities with
+pointwise 95\% ranges. (B) Corresponding upper-tail probabilities. (C) Replicated
+population VPC for automatically selected free margins and standard lognormal
+clearance. Black symbols denote generating 1st (triangle), 50th (circle) and
+99th (square) percentiles; coloured dashed lines and ribbons are fitted medians
+and pointwise 95\% ranges.}
+\end{figure}
 
 ## Conditional prediction
 
@@ -635,12 +658,12 @@ Mean $V$, $CL$ and residual estimates were nearly identical between arms
 (10.021, 3.014 and 0.120). At the 99.9th CRP percentile, generating median
 clearance was 5.44. Across fits, the flexible median was 5.28 with a pointwise
 95% interval of 4.75--5.90, whereas Gaussian FREM gave 7.60 (6.41--9.36;
-Figure 1A).
+Figure 2A).
 
 Flexible margins had lower conditional VPC log-RMSE in 174/200 paired fits.
 Median RMSE was 0.085 versus 0.336 for Gaussian FREM; the mean paired difference
 was 0.246 (95% CI 0.219--0.272), and the median relative reduction was 74.4%
-(Figure 1B).
+(Figure 2B).
 
 \begin{figure}[H]
 \centering
@@ -667,19 +690,20 @@ tests.
 
 # DISCUSSION
 
-The method removes the need to know latent eta distributions in advance. A
-Normal-eta incumbent supplies full posterior draws, candidate families are
-ranked outside the recursion, and the selected fixed model is fitted afresh.
-This preserves one likelihood within each fit and avoids treating shrunken
-conditional modes as population observations. Rankings matched the direct
-likelihood whenever Monte Carlo and overlap gates resolved. In the separate
-fixed-family NLME study, structural recovery remained accurate and non-Gaussian
-margins increased joint likelihood without changing the response model.
+The method separates the distribution assigned to each natural individual
+parameter from the coordinate map used by the nonlinear mixed-effects software.
+A standard Normal or lognormal model supplies full posterior draws; registered
+support-compatible families are ranked outside the recursion, and a resolved
+selection is fitted afresh. Each fit therefore retains one likelihood and one
+state space. In the 200-dataset automatic study, this workflow usually selected
+Gamma clearance, recovered its shape, and improved both the observed likelihood
+and population-tail VPCs. Unresolved comparisons conservatively retained the
+standard model.
 
 The clearest practical difference was prediction conditional on covariate-tail
 values. A misspecified marginal CDF changes the Gaussian score assigned to a
 covariate value and therefore changes the fitted distribution
-$p(\eta_{\mathrm{par}}\mid c)$ even when the first two moments are estimated
+$p(\psi\mid c)$ even when the first two moments are estimated
 accurately. Across 200 fits, flexible margins substantially reduced conditional
 VPC-quantile error and contained the generating upper-tail relationship within
 their between-fit band.
@@ -690,15 +714,19 @@ otherwise. Direct and translated predictions coincide at fixed population
 parameters; re-estimation of the translation instead targets $p(y\mid c_S)$.
 
 The controlled-Markov score recursion changes the computation, not the target:
-Fisher's identity gives the observed-likelihood gradient. Convergence remains
-conditional on Appendix B's assumptions. Automatic screening is likewise
-diagnosed rather than unconditional: Jensen bias favours the incumbent, and
-heavy-tailed candidates may require more draws, defensive proposals or direct
-refitted-likelihood comparison despite an apparently adequate finite ESS.
+Fisher's identity gives the observed-likelihood gradient. The diagonal
+empirical-information metric is adapted only during a finite initial period and
+then held fixed, so it changes numerical scaling but not the mean-field zeros.
+Convergence remains conditional on Appendix B's assumptions. Automatic
+screening is likewise diagnosed rather than unconditional: Jensen bias favours
+the incumbent, and heavy-tailed candidates may require more draws, defensive
+proposals or direct refitted-likelihood comparison despite an apparently
+adequate finite ESS.
 
-The evaluation used one PK model; automatic selection was benchmarked in a
-simpler latent model. Larger nonlinear selection and coverage studies remain
-necessary. General non-Gaussian R-vines, nonregular support-boundary MLEs,
+The evaluation used one PK model, and automatic natural-parameter selection and
+flexible covariate margins were evaluated in separate nonlinear experiments.
+Their combined use, broader structural models and formal coverage studies remain
+to be evaluated. General non-Gaussian R-vines, nonregular support-boundary MLEs,
 permutation-invariant nominal models and fixed-only estimated structural
 parameters are outside scope. Supported margins must be proper, identifiable
 and satisfy the stated differentiability and moment conditions; this is not a
@@ -706,17 +734,19 @@ distribution-free estimator.
 
 # CONCLUSION
 
-Flexible-margin Gaussian-copula FREM separates marginal distributions from
-dependence and reduces to Gaussian FREM when all margins are Normal. Latent eta
-families need not be known in advance: a Normal-eta incumbent, full-posterior
-screen, diagnosed independent validation and fresh selected-family fit form one
-coherent likelihood workflow. For every fixed family specification, Fisher's
+Flexible-margin Gaussian-copula FREM separates natural-parameter and covariate
+margins from dependence and contains Gaussian FREM when the declared maps yield
+Gaussian additive effects. Natural-parameter families need not be known in
+advance: a standard incumbent, full-posterior screen, diagnosed independent
+validation and fresh selected-family fit form one coherent likelihood workflow.
+For every fixed family specification, Fisher's
 identity links the controlled-Markov stochastic-approximation mean field to the
 observed-data likelihood score. In the simulations considered here,
 structural-parameter recovery remained accurate, while flexible margins
-improved the joint likelihood and conditional tail prediction under
+improved the observed likelihood and population or conditional tail prediction under
 non-Gaussian generating distributions. The fitted conditional model translates
-exactly to a conventional FFEM when parameter margins are Normal and to an
+exactly to a conventional FFEM when transformed parameter coordinates are
+Gaussian and to an
 exact conditional generative representation otherwise.
 
 # DECLARATIONS
@@ -815,21 +845,21 @@ The multivariate-Normal conditioning formula gives
  =R_{P,P}-B_{\xi,S}R_{S,P},                              \tag{A2}
 \]
 
-where $\varepsilon\sim N(0,I)$. If the parameter margins are Normal,
-$\eta_P=D_P\xi_P$; substitution in (A2) yields the coefficient matrix
-$D_PB_{\xi,S}$ and UPV covariance
+where $\varepsilon\sim N(0,I)$. If the transformed parameter coordinates are
+Gaussian, $\phi_P=C_P\mu+D_P\xi_P$; substitution in (A2) yields the coefficient
+matrix $D_PB_{\xi,S}$ and UPV covariance
 $D_PL_SL_S^{\mathsf T}D_P$ stated in the conventional FFEM representation.
 If the selected covariate margins are also Normal, replacing
 $z_S$ by $D_S^{-1}(c_S-\mu_S)$ gives the usual raw-scale FREM coefficient
 matrix and Schur-complement UPV covariance.
 
-For continuous non-Normal parameter margins, let $Q_\eta$ apply their quantile
-functions componentwise. Since
-$\eta_P=Q_\eta\{\Phi(\xi_P)\}$, (A2) gives
+For other continuous natural-parameter margins, let $Q_\psi$ apply their
+quantile functions componentwise. Since
+$\psi_P=Q_\psi\{\Phi(\xi_P)\}$, (A2) gives
 
 \[
- \eta_P\mid c_S
- =Q_\eta\!\left[\Phi\!\left\{
+ \psi_P\mid c_S
+ =Q_\psi\!\left[\Phi\!\left\{
  B_{\xi,S}z_S(c_S)+L_S\varepsilon\right\}\right].        \tag{A3}
 \]
 
@@ -838,7 +868,7 @@ text and has the same conditional law as the fitted FREM. For an ordered
 categorical covariate, conditioning is instead on its latent Gaussian interval;
 integrating (A2) over the corresponding truncated-Normal score distribution
 gives the stated interval mixture. Finally, direct FREM and translated-FFEM
-predictions integrate the same response kernel $p(Y\mid\eta_P)$ against this
+predictions integrate the same response kernel $p(Y\mid\psi_P)$ against this
 same conditional distribution. Their conditional predictive distributions are
 therefore identical when the population parameters are held fixed.
 
@@ -859,12 +889,13 @@ E_{\pi_{0i}}\!\left(\frac{f_{mi}}{f_{0i}}\right)
 \end{aligned}                                             \tag{A4}
 \]
 
-When only the eta distribution changes, the response density cancels, giving
-(14). The Normal incumbent dominates the screened families, but (A4) alone does
-not ensure finite variance or adequate mixing; Student ratios may have infinite
-second moments. Independent fitting/validation pools separate optimization
-noise, after which the pools are discarded and the selected model is fitted
-afresh.
+When only the natural-parameter distribution changes, the response density and
+coordinate-map Jacobian cancel, giving (14). The identity requires candidate
+and incumbent laws to have compatible support and the candidate to be absolutely
+continuous with respect to the incumbent. It does not by itself ensure finite
+variance or adequate mixing; Student ratios may have infinite second moments.
+Independent fitting and validation pools separate optimization noise, after
+which the pools are discarded and the selected model is fitted afresh.
 
 # APPENDIX B: Controlled kernel, convergence and numerical error
 
