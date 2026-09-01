@@ -275,7 +275,7 @@ copulaGaussianFremScoreMaterialize <- function(internal, layout,
 }
 
 copulaGaussianFremCompleteScoreInternal <- function(
-    internal, layout, E, w, numericalStep) {
+    internal, layout, E, w, numericalStep, skipMargins = integer()) {
   candidate <- try(copulaGaussianFremScoreMaterialize(internal, layout,
     buildVine = FALSE),
     silent = TRUE)
@@ -292,6 +292,16 @@ copulaGaussianFremCompleteScoreInternal <- function(
   scoreX <- matrix(NA_real_, nrow(E), layout$d)
   numerical <- character(); oneSided <- FALSE
   for (j in seq_len(layout$d)) {
+    if (j %in% skipMargins) {
+      ## A fixed-reference coordinate has uniform density in its retained
+      ## percentile and a parameter-invariant Gaussian score. Its complete
+      ## population score is therefore zero here; any response-path and direct-
+      ## row contribution is supplied by the declared hybrid coordinates.
+      index <- layout$marginLayout$index[[j]]
+      if (length(index)) parameterGradient[index] <- 0
+      scoreX[, j] <- 0
+      next
+    }
     local <- copulaGaussianMarginNativeScore(residual[, j],
       candidate$margins[[j]], evaluated$z[, j], zInfluence[, j],
       numericalStep)
@@ -348,6 +358,104 @@ copulaGaussianFremCompleteScoreInternal <- function(
   list(gradient = gradient, nativeGradient = nativeGradient,
     numerical = unique(numerical), candidate = candidate,
     residual = residual, evaluated = evaluated, oneSided = oneSided)
+}
+
+## Hybrid score for fixed-reference continuous coordinates.  At the current
+## parameter value E and Q_theta(U) coincide, so the ordinary complete score is
+## valid for every coordinate that does not move Q_theta(U).  Only population
+## locations feeding a referenced eta and parameters of referenced margins need
+## the full pathwise response derivative.  Evaluate centered differences for
+## those coordinates and retain the shared analytic margin, correlation and
+## residual scores everywhere else.
+copulaGaussianFremReferenceScoreInternal <- function(
+    internal, layout, E, w, numericalStep, referenceUniform, objective,
+    materializeState) {
+  referenceUniform <- as.matrix(referenceUniform)
+  referenced <- which(colSums(is.finite(referenceUniform)) > 0L)
+  if (!length(referenced))
+    return(copulaGaussianFremCompleteScoreInternal(
+      internal, layout, E, w, numericalStep))
+  base <- copulaGaussianFremCompleteScoreInternal(
+    internal, layout, E, w, numericalStep, skipMargins = referenced)
+  if (is.null(base)) return(NULL)
+
+  numericalIndex <- integer(); responsePathIndex <- integer()
+  movingEta <- intersect(referenced, seq_len(layout$dEta))
+  if (length(movingEta) && is.function(layout$response$evaluate) &&
+      layout$nLocation) {
+    if (layout$hasDesign) {
+      local <- which(vapply(layout$locationIndex, function(index)
+        any(layout$locMap[index, movingEta, drop = FALSE] != 0), logical(1)))
+    } else local <- intersect(movingEta, seq_len(layout$nLocation))
+    responsePathIndex <- c(responsePathIndex, local)
+  }
+  for (j in referenced) {
+    index <- layout$marginLayout$index[[j]]
+    if (length(index)) {
+      internalIndex <- layout$nLocation + index
+      if (j %in% movingEta && all(is.finite(referenceUniform[, j])))
+        responsePathIndex <- c(responsePathIndex, internalIndex) else
+        numericalIndex <- c(numericalIndex, internalIndex)
+    }
+  }
+  numericalIndex <- sort(unique(numericalIndex))
+  responsePathIndex <- sort(unique(responsePathIndex))
+  if (!length(c(numericalIndex, responsePathIndex))) {
+    base$numerical <- unique(c(base$numerical, "fixed-reference.none"))
+    return(base)
+  }
+
+  gradient <- base$gradient
+  oneSided <- isTRUE(base$oneSided)
+  ## A response-gradient callback differentiates the structural model once per
+  ## referenced eta coordinate. Parameter-specific directions then use only
+  ## quantile/materialization calls and a chain-rule dot product.
+  if (length(responsePathIndex) && is.function(layout$response$gradient)) {
+    candidate <- base$candidate
+    complete <- materializeState(candidate)
+    responseGradient <- try(layout$response$gradient(
+      complete$absolute[, seq_len(layout$dEta), drop = FALSE],
+      candidate$residual, movingEta, numericalStep), silent = TRUE)
+    if (inherits(responseGradient, "try-error") ||
+        any(dim(responseGradient) != c(nrow(E), layout$dEta)) ||
+        any(!is.finite(responseGradient))) return(NULL)
+    for (index in responsePathIndex) {
+      plus <- minus <- internal
+      plus[index] <- plus[index] + numericalStep
+      minus[index] <- minus[index] - numericalStep
+      plusCandidate <- try(copulaGaussianFremScoreMaterialize(
+        plus, layout, buildVine = FALSE), silent = TRUE)
+      minusCandidate <- try(copulaGaussianFremScoreMaterialize(
+        minus, layout, buildVine = FALSE), silent = TRUE)
+      if (inherits(plusCandidate, "try-error") ||
+          inherits(minusCandidate, "try-error")) return(NULL)
+      plusState <- materializeState(plusCandidate)
+      minusState <- materializeState(minusCandidate)
+      direction <- (plusState$absolute[, seq_len(layout$dEta), drop = FALSE] -
+        minusState$absolute[, seq_len(layout$dEta), drop = FALSE]) /
+        (2 * numericalStep)
+      gradient[index] <- gradient[index] +
+        sum(responseGradient * direction) / nrow(E)
+    }
+  } else numericalIndex <- sort(unique(c(numericalIndex,
+    responsePathIndex)))
+  for (index in numericalIndex) {
+    plus <- minus <- internal
+    plus[index] <- plus[index] + numericalStep
+    minus[index] <- minus[index] - numericalStep
+    fp <- objective(plus); fm <- objective(minus)
+    if (!is.finite(fp) || !is.finite(fm)) return(NULL)
+    gradient[index] <- (fp - fm) / (2 * numericalStep)
+  }
+  base$gradient <- gradient
+  base$nativeGradient <- gradient / copulaScoreInternalDerivative(
+    internal, layout$lower, layout$upper)
+  base$numerical <- unique(c(base$numerical,
+    if (length(responsePathIndex) && is.function(layout$response$gradient))
+      "fixed-reference.chain-rule-path" else
+        "fixed-reference.path-coordinates"))
+  base$oneSided <- oneSided
+  base
 }
 
 copulaGaussianFremPopulationScoreStep <- function(
@@ -499,10 +607,11 @@ copulaGaussianFremPopulationScoreStep <- function(
     TRUE
   }
   h <- finiteDifference * sqrt(gain)
-  analyticEligible <- isTRUE(analyticScore) && completeContinuous &&
-    !hasReference
-  analytic <- if (analyticEligible)
-    copulaGaussianFremCompleteScoreInternal(current, layout, E, w, h) else NULL
+  analyticEligible <- isTRUE(analyticScore) && completeContinuous
+  analytic <- if (!analyticEligible) NULL else if (hasReference)
+    copulaGaussianFremReferenceScoreInternal(current, layout, E, w, h,
+      referenceUniform, objective, materializeState) else
+    copulaGaussianFremCompleteScoreInternal(current, layout, E, w, h)
   numericalFallbackCount <- 0L
   if (!is.null(analytic)) {
     if (isTRUE(analytic$oneSided) && !isTRUE(adaptMetric))
@@ -619,7 +728,8 @@ copulaGaussianFremPopulationScoreStep <- function(
       max(abs(state$scoreAverage)),
     finiteDifference = h, gain = gain, scoreScale = scoreScale,
     scoreMethod = if (is.null(analytic)) "global-centered-difference" else
-      "analytic-with-declared-local-numerical-components",
+      if (hasReference) "hybrid-fixed-reference-path-score" else
+        "analytic-with-declared-local-numerical-components",
     numericalScoreComponents = if (is.null(analytic)) "all" else
       analytic$numerical,
     preconditionerMin = min(preconditioner),

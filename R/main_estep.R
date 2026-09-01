@@ -72,8 +72,14 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	mean.phiM<-do.call(rbind,rep(list(mean.phi),Uargs$nchains))
 	phiM[,varList$ind0.eta]<-mean.phiM[,varList$ind0.eta]
 	if (useCop) {
-		Ueta <- if (jointConditioning) NULL else function(e) copulaUeta(e)
+		priorKernel <- if (!jointConditioning &&
+		    copulaIsFullGaussianVine(population$vine, population$d))
+			copulaGaussianFremContinuousPriorKernel(
+				population$vine, population$margins) else NULL
+		Ueta <- if (jointConditioning) NULL else if (!is.null(priorKernel))
+			priorKernel$negative else function(e) copulaUeta(e)
 	} else {
+		priorKernel <- NULL
 		Ueta <- function(e) 0.5*rowSums(e*(e%*%somega))
 	}
 	

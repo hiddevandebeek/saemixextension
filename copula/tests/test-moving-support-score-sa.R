@@ -20,6 +20,20 @@ stopifnot(max(abs(uniform$cdf(uniform$quantile(u, uniform$parameters),
   all(vapply(list(uniform, gamma, covUniform, genericUniform),
     copulaMarginHasMovingSupport, logical(1))))
 
+## Cached E-step prior algebra is exactly the same density as the public joint
+## evaluator, including the moving-support Gamma margin.
+cacheR <- matrix(c(1, .37, .37, 1), 2L)
+cacheVine <- copulaGaussianRvineFromCor(cacheR,
+  rvinecopulib::cvine_structure(c(2, 1)))
+cacheMargins <- list(copulaMarginNormal(.27), gamma)
+cacheEta <- copulaMarginsQuantile(
+  rvinecopulib::rvinecop(150L, cacheVine), cacheMargins)
+cacheKernel <- copulaGaussianFremContinuousPriorKernel(
+  cacheVine, cacheMargins)
+cacheLiteral <- -copulaGaussianFremLogPrior(cacheEta, cacheVine,
+  cacheMargins, 2L, "joint")
+stopifnot(max(abs(cacheKernel$negative(cacheEta) - cacheLiteral)) < 2e-12)
+
 ## Independent Fisher oracle for Y|U with X=Q_theta(U). This verifies the
 ## pathwise response term that a native-X complete score would miss.
 y <- .18; sigma <- .22; half <- .48
@@ -33,6 +47,61 @@ step <- 1e-5
 observedScore <- (log(observed(half + step)) - log(observed(half - step))) /
   (2 * step)
 stopifnot(abs(posteriorScore - observedScore) < 2e-7)
+
+## Shared hybrid score: only the fixed-reference path coordinates are
+## numerical; ordinary margin, dependence and residual coordinates remain
+## analytic. Compare the complete internal score with the former global
+## centered-difference oracle.
+set.seed(300840L)
+nOracle <- 70L
+oracleR <- matrix(c(1, .32, .32, 1), 2L)
+oracleVine <- copulaGaussianRvineFromCor(oracleR,
+  rvinecopulib::cvine_structure(c(2, 1)))
+oracleMargins <- list(copulaMarginNormal(.24),
+  copulaMarginCenteredGamma(3.2, .38))
+oracleZ <- matrix(rnorm(nOracle * 2L), ncol = 2L) %*% chol(oracleR)
+oracleEta <- cbind(.24 * oracleZ[, 1L],
+  oracleMargins[[2L]]$quantile(pnorm(oracleZ[, 2L]),
+    oracleMargins[[2L]]$parameters))
+oracleReference <- matrix(NA_real_, nOracle, 2L)
+oracleReference[, 2L] <- oracleMargins[[2L]]$cdf(oracleEta[, 2L],
+  oracleMargins[[2L]]$parameters)
+oracleF <- exp(oracleEta[, 1L]) + .7 * exp(oracleEta[, 2L])
+oracleY <- oracleF * (1 + .11 * rnorm(nOracle))
+oracleResponse <- list(y = oracleY, f = oracleF, etype = rep(1L, nOracle),
+  pres = c(0, .12), free = 2L,
+  evaluate = function(phiRandom, candidateResidual) {
+    f <- exp(phiRandom[, 1L]) + .7 * exp(phiRandom[, 2L])
+    sd <- error(f, candidateResidual, rep(1L, length(f)))
+    -.5 * ((oracleY - f) / sd)^2 - log(sd) - .5 * log(2 * pi)
+  })
+oracleResponse$gradient <- function(phiRandom, candidateResidual,
+                                    coordinates, step) {
+  answer <- matrix(0, nrow(phiRandom), ncol(phiRandom))
+  for (coordinate in coordinates) {
+    plus <- minus <- phiRandom
+    plus[, coordinate] <- plus[, coordinate] + step
+    minus[, coordinate] <- minus[, coordinate] - step
+    answer[, coordinate] <- (oracleResponse$evaluate(plus,
+      candidateResidual) - oracleResponse$evaluate(minus,
+        candidateResidual)) / (2 * step)
+  }
+  answer
+}
+hybrid <- copulaGaussianFremPopulationScoreStep(oracleEta,
+  rep(1 / nOracle, nOracle), oracleMargins, oracleVine, 2L, 2L, .35,
+  scoreScale = .002, finiteDifference = 2e-5,
+  response = oracleResponse, referenceUniform = oracleReference,
+  analyticScore = TRUE)
+global <- copulaGaussianFremPopulationScoreStep(oracleEta,
+  rep(1 / nOracle, nOracle), oracleMargins, oracleVine, 2L, 2L, .35,
+  scoreScale = .002, finiteDifference = 2e-5,
+  response = oracleResponse, referenceUniform = oracleReference,
+  analyticScore = FALSE)
+hybridError <- max(abs(hybrid$score - global$score))
+stopifnot(hybridError < 5e-4,
+  identical(hybrid$scoreMethod, "hybrid-fixed-reference-path-score"),
+  length(hybrid$numericalScoreComponents) < length(hybrid$score))
 
 ## End-to-end nonlinear fit with two different moving-support eta margins.
 setwd(file.path(copulaTestRepo, "copula"))
@@ -70,7 +139,8 @@ state <- copulaGet(fit)
 stopifnot(inherits(fit, "SaemixObject"),
   identical(state$lastJoint$backend, "gaussian-copula-frem-score-sa"),
   grepl("fixed percentile", state$lastJoint$scoreTheory$movingSupportAugmentation),
-  identical(state$lastJoint$scoreMethod, "global-centered-difference"),
+  identical(state$lastJoint$scoreMethod,
+    "hybrid-fixed-reference-path-score"),
   state$lastJoint$projectionCount == 0L,
   state$lastJoint$postFreezeBacktrackCount == 0L,
   state$lastJoint$postFreezeNoMoveCount == 0L,
@@ -110,5 +180,6 @@ stopifnot(copulaMarginHasMovingSupport(state2$margins[[3L]]),
   state2$lastJoint$postFreezeNoMoveCount == 0L,
   all(is.finite(fit2@results@fixed.effects)))
 
-cat(sprintf(paste0("moving-support score-SA checks passed; Fisher error %.3g\n"),
-  abs(posteriorScore - observedScore)))
+cat(sprintf(paste0("moving-support score-SA checks passed; Fisher error %.3g, ",
+  "hybrid score error %.3g\n"),
+  abs(posteriorScore - observedScore), hybridError))

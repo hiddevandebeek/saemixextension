@@ -323,6 +323,42 @@ copulaGaussianFremEvaluateMargins <- function(x, margins) {
   list(z = z, logMargin = logMargin, valid = valid)
 }
 
+## Per-iteration complete continuous prior kernel.  The R-vine and its
+## correlation do not change within an E step, so reconstructing R and its
+## Cholesky factor for every random-walk proposal is redundant.  Margin values
+## remain proposal-specific and are evaluated exactly.
+copulaGaussianFremContinuousPriorKernel <- function(vine, margins) {
+  d <- length(margins)
+  if (!copulaIsFullGaussianVine(vine, d) ||
+      any(vapply(margins, function(margin)
+        !identical(margin$type, "continuous"), logical(1))))
+    return(NULL)
+  correlation <- copulaGaussianRvineCor(vine, d)
+  U <- chol(correlation)
+  logDeterminant <- 2 * sum(log(diag(U)))
+  logTwoPi <- log(2 * pi)
+  negative <- function(E) {
+    E <- as.matrix(E)
+    if (ncol(E) != d || anyNA(E) || any(!is.finite(E)))
+      return(rep(Inf, nrow(E)))
+    evaluated <- copulaGaussianFremEvaluateMargins(E, margins)
+    answer <- rep(Inf, nrow(E))
+    rows <- which(evaluated$valid)
+    if (length(rows)) {
+      z <- evaluated$z[rows, , drop = FALSE]
+      standardized <- forwardsolve(t(U), t(z))
+      logGaussian <- -.5 * (d * logTwoPi + logDeterminant +
+        colSums(standardized^2))
+      logDensity <- logGaussian - rowSums(stats::dnorm(z, log = TRUE)) +
+        rowSums(evaluated$logMargin[rows, , drop = FALSE])
+      answer[rows] <- -logDensity
+    }
+    answer
+  }
+  list(negative = negative, correlation = correlation, chol = U,
+    method = "cached-continuous-gaussian-prior")
+}
+
 ## Observed-data population density for rows (eta, covariates). NA is permitted
 ## only in covariate columns.  Missing covariates are marginalized exactly.
 copulaGaussianFremLogPrior <- function(E, vine, margins, dEta,

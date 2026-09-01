@@ -143,8 +143,35 @@ copulaScoreResponseBlock <- function(phi, randomIndex, transform, id, x, y,
         log(candidateSd) - .5 * log(2 * pi)
     }
   })
+  gradient <- local({
+    evaluateLog <- evaluate
+    observationId <- as.integer(id)
+    function(phiRandom, candidateResidual, coordinates, step) {
+      phiRandom <- as.matrix(phiRandom)
+      coordinates <- as.integer(coordinates)
+      if (!length(coordinates))
+        return(matrix(0, nrow(phiRandom), ncol(phiRandom)))
+      if (any(observationId < 1L | observationId > nrow(phiRandom)))
+        stop("response-gradient subject index is incompatible with the latent batch")
+      answer <- matrix(0, nrow(phiRandom), ncol(phiRandom))
+      for (coordinate in coordinates) {
+        plus <- minus <- phiRandom
+        plus[, coordinate] <- plus[, coordinate] + step
+        minus[, coordinate] <- minus[, coordinate] - step
+        derivative <- (evaluateLog(plus, candidateResidual) -
+          evaluateLog(minus, candidateResidual)) / (2 * step)
+        if (any(!is.finite(derivative)))
+          stop("non-finite fixed-reference response derivative")
+        summed <- rowsum(matrix(derivative, ncol = 1L), observationId,
+          reorder = FALSE)
+        answer[as.integer(rownames(summed)), coordinate] <- summed[, 1L]
+      }
+      answer
+    }
+  })
   list(y = y, f = predictions, etype = x$ytype, pres = residual,
     free = copulaScoreResidualIndices(errorModel), evaluate = evaluate,
+    gradient = gradient,
     batchResidualMle = if (length(errorModel) == 1L &&
       errorModel %in% c("constant", "exponential", "proportional"))
       sqrt(residualSum / (nchains * nobs)) else NA_real_)
