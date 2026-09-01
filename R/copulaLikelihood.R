@@ -70,6 +70,10 @@ llisCopula.saemix <- function(saemixObject, defensive=0.25, batch=100L,
   dEta <- as.integer(state$dEta %||% state$d)
   dConditioning <- as.integer(state$dConditioning %||% 0L)
   hasConditioning <- dConditioning > 0L
+  naturalScale <- identical(state$populationScale, "parameter")
+  etaTransform <- as.integer(model["transform.par"][etaIndex])
+  if (naturalScale && hasConditioning)
+    stop("parameter-scale likelihood with conditioning covariates is not yet enabled")
   if (!identical(etaIndex, as.integer(state$etaIndex)) ||
       length(etaIndex) != dEta || state$d != dEta + dConditioning)
     stop("stored copula/eta ordering does not match the fitted model")
@@ -150,11 +154,20 @@ llisCopula.saemix <- function(saemixObject, defensive=0.25, batch=100L,
       if (nPrior) {
         take <- rep(c(rep(FALSE, nT), rep(TRUE, nPrior)), each=N)
         uprior <- rvinecopulib::rvinecop(sum(take), state$vine)
-        phiEta[take, ] <- pop[take, , drop=FALSE] +
+        if (naturalScale) {
+          typical <- copulaWorkingToNatural(pop[take, , drop = FALSE],
+            etaTransform)
+          psiPrior <- copulaNaturalMarginsQuantile(uprior, typical,
+            state$margins)
+          phiEta[take, ] <- copulaNaturalToWorking(psiPrior, etaTransform)
+        } else phiEta[take, ] <- pop[take, , drop=FALSE] +
           copulaMarginsQuantile(uprior, state$margins)
       }
       eta <- phiEta - pop
-      logPrior <- if (hasConditioning) {
+      logPrior <- if (naturalScale) {
+        -copulaNaturalWorkingPriorKernel(state$vine, state$margins, pop,
+          etaTransform)$negative(eta)
+      } else if (hasConditioning) {
         conditioningRows <- as.matrix(state$conditioning)[subjectRow, , drop=FALSE]
         jointState <- cbind(eta, conditioningRows)
         copulaGaussianFremLogPrior(

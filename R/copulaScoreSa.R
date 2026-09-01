@@ -275,7 +275,8 @@ copulaGaussianFremScoreMaterialize <- function(internal, layout,
 }
 
 copulaGaussianFremCompleteScoreInternal <- function(
-    internal, layout, E, w, numericalStep, skipMargins = integer()) {
+    internal, layout, E, w, numericalStep, skipMargins = integer(),
+    referenceUniform = NULL) {
   candidate <- try(copulaGaussianFremScoreMaterialize(internal, layout,
     buildVine = FALSE),
     silent = TRUE)
@@ -283,7 +284,24 @@ copulaGaussianFremCompleteScoreInternal <- function(
   residual <- if (layout$hasDesign)
     E - copulaLocation(layout$X, candidate$beta, layout$locMap) else
     sweep(E, 2L, candidate$delta, "-")
-  evaluated <- try(copulaGaussianFremEvaluateMargins(
+  if (length(skipMargins)) {
+    referenceUniform <- as.matrix(referenceUniform)
+    z <- logMargin <- matrix(NA_real_, nrow(E), layout$d)
+    valid <- rep(TRUE, nrow(E))
+    for (j in seq_len(layout$d)) if (j %in% skipMargins) {
+      u <- referenceUniform[, j]
+      ok <- is.finite(u) & u > 0 & u < 1
+      valid <- valid & ok; z[ok, j] <- stats::qnorm(u[ok]); logMargin[ok, j] <- 0
+    } else {
+      local <- try(copulaGaussianFremEvaluateMargins(
+        matrix(residual[, j], ncol = 1L), list(candidate$margins[[j]])),
+        silent = TRUE)
+      if (inherits(local, "try-error")) return(NULL)
+      z[, j] <- local$z[, 1L]; logMargin[, j] <- local$logMargin[, 1L]
+      valid <- valid & local$valid
+    }
+    evaluated <- list(z = z, logMargin = logMargin, valid = valid)
+  } else evaluated <- try(copulaGaussianFremEvaluateMargins(
     residual, candidate$margins), silent = TRUE)
   if (inherits(evaluated, "try-error") || !all(evaluated$valid)) return(NULL)
   R <- candidate$correlation
@@ -376,7 +394,8 @@ copulaGaussianFremReferenceScoreInternal <- function(
     return(copulaGaussianFremCompleteScoreInternal(
       internal, layout, E, w, numericalStep))
   base <- copulaGaussianFremCompleteScoreInternal(
-    internal, layout, E, w, numericalStep, skipMargins = referenced)
+    internal, layout, E, w, numericalStep, skipMargins = referenced,
+    referenceUniform = referenceUniform)
   if (is.null(base)) return(NULL)
 
   numericalIndex <- integer(); responsePathIndex <- integer()
@@ -461,11 +480,14 @@ copulaGaussianFremReferenceScoreInternal <- function(
 copulaGaussianFremPopulationScoreStep <- function(
     E, w, margins0, vine0, d, dEta, gain,
     X = NULL, locMap = NULL, beta0 = NULL, betaFree = NULL,
-    state = NULL, scoreScale = 0.05, finiteDifference = 1e-4,
+    state = NULL, scoreScale = 1, finiteDifference = 1e-4,
     projection = 24, withMu = TRUE, adaptMetric = TRUE,
     average = FALSE, useAverage = FALSE, response = NULL,
     analyticScore = TRUE, categoricalUniform = NULL,
-    referenceUniform = NULL) {
+    referenceUniform = NULL,
+    populationScale = c("transformed-additive", "parameter"),
+    transform = NULL) {
+  populationScale <- match.arg(populationScale)
   E <- as.matrix(E); w <- as.numeric(w); w <- w / sum(w)
   if (ncol(E) != d || nrow(E) != length(w) ||
       anyNA(E[, seq_len(dEta), drop = FALSE]) ||
@@ -479,6 +501,9 @@ copulaGaussianFremPopulationScoreStep <- function(
     stop("invalid population score gain or numerical control")
   layout <- copulaGaussianFremScoreLayout(margins0, vine0, d, dEta,
     X, locMap, beta0, betaFree, withMu, response)
+  layout$populationScale <- populationScale
+  layout$transform <- if (is.null(transform)) rep(0L, dEta) else
+    rep_len(as.integer(transform), dEta)
   current <- copulaScoreToInternal(layout$native, layout$lower, layout$upper)
   discrete <- which(vapply(margins0, function(m)
     identical(m$type, "discrete"), logical(1)))
@@ -502,6 +527,18 @@ copulaGaussianFremPopulationScoreStep <- function(
     location <- if (layout$hasDesign)
       copulaLocation(layout$X, candidate$beta, layout$locMap) else
       matrix(candidate$delta, nrow(E), d, byrow = TRUE)
+    if (identical(populationScale, "parameter")) {
+      if (d != dEta || any(!is.finite(referenceUniform)))
+        stop("parameter-scale score materialization requires complete reference uniforms")
+      typical <- copulaWorkingToNatural(
+        location[, seq_len(dEta), drop = FALSE], layout$transform)
+      psi <- copulaNaturalMarginsQuantile(referenceUniform[, seq_len(dEta),
+        drop = FALSE], typical, candidate$margins)
+      absolute <- copulaNaturalToWorking(psi, layout$transform)
+      residual <- absolute - location[, seq_len(dEta), drop = FALSE]
+      return(list(residual = residual, absolute = absolute,
+        typical = typical, natural = psi))
+    }
     residual <- E - location
     for (j in seq_len(d)) {
       rows <- is.finite(referenceUniform[, j])
@@ -655,9 +692,19 @@ copulaGaussianFremPopulationScoreStep <- function(
   if (metricGain > 0)
     state$runningSquare <- state$runningSquare + metricGain *
       (gradient^2 - state$runningSquare)
-  preconditioner <- pmin(10, pmax(.1,
-    1 / sqrt(pmax(state$runningSquare, 1e-8))))
-  direction <- preconditioner * gradient
+  diagonalMetric <- pmin(20, pmax(.05,
+    1 / pmax(state$runningSquare, 1e-6)))
+  if (is.null(state$inverseInformation) ||
+      any(dim(state$inverseInformation) != c(length(gradient), length(gradient))))
+    state$inverseInformation <- diag(diagonalMetric, length(gradient))
+  if (is.null(state$metricUpdateCount)) state$metricUpdateCount <- 0L
+  if (isTRUE(adaptMetric)) {
+    state$inverseInformation <- diag(diagonalMetric, length(gradient))
+    state$metricUpdateCount <- state$metricUpdateCount + 1L
+  }
+  metricEigen <- eigen(state$inverseInformation, symmetric = TRUE,
+    only.values = TRUE)$values
+  direction <- as.numeric(state$inverseInformation %*% gradient)
   proposal <- current + gain * scoreScale * direction
   if (is.null(state$projectionCentre) ||
       length(state$projectionCentre) != length(current))
@@ -718,8 +765,12 @@ copulaGaussianFremPopulationScoreStep <- function(
   ## Evaluate it only for a numerical-score step or the terminal averaged fit.
   reportedValue <- if (is.null(analytic) || isTRUE(useAverage))
     objective(reportedInternal) else NA_real_
+  reportedState <- materializeState(reported)
+  reportedSd <- if (identical(populationScale, "parameter"))
+    apply(reportedState$residual[, seq_len(dEta), drop = FALSE], 2L,
+      stats::sd) else copulaMarginScales(reported$margins)
   list(beta = reported$beta, margins = reported$margins,
-    sd = copulaMarginScales(reported$margins), vine = reported$vine,
+    sd = reportedSd, vine = reported$vine,
     delta = reported$delta, residual = reported$residual,
     value = reportedValue,
     score = gradient, scoreMax = max(abs(gradient)),
@@ -732,8 +783,9 @@ copulaGaussianFremPopulationScoreStep <- function(
         "analytic-with-declared-local-numerical-components",
     numericalScoreComponents = if (is.null(analytic)) "all" else
       analytic$numerical,
-    preconditionerMin = min(preconditioner),
-    preconditionerMax = max(preconditioner), metricGain = metricGain,
+    preconditionerMin = min(metricEigen),
+    preconditionerMax = max(metricEigen), metricGain = metricGain,
+    metricUpdateCount = state$metricUpdateCount,
     averaging = isTRUE(average), usedAverage = isTRUE(useAverage) &&
       isTRUE(state$averagingStarted),
     state = state, backend = "gaussian-copula-frem-score-sa",

@@ -2,7 +2,8 @@
 
 copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
                                    locationMap = NULL, beta = NULL,
-                                   betaFree = NULL, subject = NULL) {
+                                   betaFree = NULL, transform = NULL,
+                                   subject = NULL) {
   eta <- as.matrix(eta)
   if (!nrow(eta) || any(!is.finite(eta)))
     stop("score batch requires finite eta rows")
@@ -46,6 +47,8 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
     .cop$betaCurrent <- as.numeric(beta)
     .cop$betaFree <- if (is.null(betaFree)) seq_along(beta) else
       as.integer(betaFree)
+    .cop$transform <- if (is.null(transform)) rep(0L, ncol(phi)) else
+      rep_len(as.integer(transform), ncol(phi))
     if (!isTRUE(.cop$locationRankChecked)) {
       active <- intersect(.cop$betaFree,
         which(rowSums(abs(locationMap)) > 0))
@@ -64,6 +67,7 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
     .cop$locMap <- NULL
     .cop$betaCurrent <- NULL
     .cop$betaFree <- NULL
+    .cop$transform <- NULL
   }
 
   hasCategorical <- !is.null(conditioning) && any(vapply(
@@ -84,8 +88,23 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
       .cop$dEta %||% ncol(eta))
   .cop$curConditioningComplete <- conditioning
   referenceUniform <- matrix(NA_real_, nrow(eta), .cop$d)
+  if (identical(.cop$populationScale, "parameter")) {
+    if (!hasDesign || .cop$dConditioning > 0L)
+      stop("parameter-scale score fitting requires a complete design-aware eta block")
+    predictor <- copulaLocation(design, as.numeric(beta), locationMap)
+    typical <- copulaWorkingToNatural(predictor, .cop$transform)
+    psi <- copulaWorkingToNatural(phi, .cop$transform)
+    for (j in seq_len(.cop$dEta)) {
+      margin <- .cop$margins[[j]]
+      u <- margin$cdf(psi[, j], typical[, j], margin$parameters)
+      if (any(!is.finite(u)) || any(u <= 0 | u >= 1))
+        stop("natural parameter could not be mapped to a fixed reference interior")
+      referenceUniform[, j] <- u
+    }
+  }
   movingEta <- which(vapply(.cop$margins[seq_len(.cop$dEta)],
-    copulaMarginHasMovingSupport, logical(1)))
+    function(margin) inherits(margin, "saemix_copula_margin") &&
+      copulaMarginHasMovingSupport(margin), logical(1)))
   for (j in movingEta) {
     u <- .cop$margins[[j]]$cdf(eta[, j], .cop$margins[[j]]$parameters)
     if (any(!is.finite(u)) || any(u <= 0 | u >= 1))
@@ -212,7 +231,9 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
     adaptMetric = kiter <= scoreBurn, average = kiter > scoreBurn,
     useAverage = isTRUE(final), response = response,
     categoricalUniform = .cop$curCategoricalUniform,
-    referenceUniform = .cop$curReferenceUniform)
+    referenceUniform = .cop$curReferenceUniform,
+    populationScale = .cop$populationScale,
+    transform = .cop$transform)
 
   .cop$scoreState <- answer$state
   .cop$margins <- answer$margins
@@ -226,6 +247,9 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
   copulaAssertFrozen(.cop$vine)
 
   theory <- answer$scoreTheory
+  theory$scoreScaleSource <- .cop$scoreScaleSource %||% "numeric-override"
+  theory$scoreMetric <- paste0("regularized diagonal empirical score-",
+    "information inverse; adapted only through iteration ", scoreBurn)
   theory$proposalScaleFrozen <-
     !is.null(.cop$rwProposalFrozen) && kiter > scoreBurn
   theory$blockScheduleFrozen <-
@@ -262,6 +286,7 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
     batchResidualMle = response$batchResidualMle %||% NA_real_,
     preconditionerMin = answer$preconditionerMin,
     preconditionerMax = answer$preconditionerMax,
+    metricUpdateCount = answer$metricUpdateCount,
     metricGain = answer$metricGain,
     averaging = answer$averaging, usedAverage = answer$usedAverage,
     projectionCount = answer$state$projectionCount,

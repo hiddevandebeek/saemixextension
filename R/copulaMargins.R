@@ -580,7 +580,10 @@ copulaFitCovariateMargins <- function(x, candidates = "auto") {
 
 copulaMarginLayout <- function(margins) {
   if (!is.list(margins) || !length(margins)) stop("margins must be a non-empty list")
-  lapply(margins, copulaMarginValidate, probe = FALSE)
+  lapply(margins, function(margin) if (
+      inherits(margin, "saemix_natural_parameter_margin"))
+      copulaNaturalMarginValidate(margin, probe = FALSE) else
+      copulaMarginValidate(margin, probe = FALSE))
   index <- vector("list", length(margins)); par <- lower <- upper <- numeric()
   for (j in seq_along(margins)) {
     m <- margins[[j]]
@@ -592,8 +595,14 @@ copulaMarginLayout <- function(margins) {
 }
 
 copulaMarginsWithParameters <- function(margins, layout, parameters) {
-  lapply(seq_along(margins), function(j)
-    copulaMarginWithFreeParameters(margins[[j]], parameters[layout$index[[j]]]))
+  lapply(seq_along(margins), function(j) {
+    margin <- margins[[j]]; index <- layout$index[[j]]
+    native <- margin$parameters
+    if (length(index)) native[margin$free] <- parameters[index]
+    if (inherits(margin, "saemix_natural_parameter_margin"))
+      copulaNaturalMarginWithParameters(margin, native) else
+      copulaMarginWithParameters(margin, native)
+  })
 }
 
 copulaMarginScales <- function(margins) vapply(margins, function(m) {

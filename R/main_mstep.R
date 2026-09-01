@@ -108,6 +108,7 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		  phi=phiM[,varList$ind.eta,drop=FALSE], design=.designBatch,
 		  locationMap=Uargs$LCOV[,varList$ind.eta,drop=FALSE],
 		  beta=as.numeric(betas), betaFree=Uargs$ind.fix1,
+		  transform=Dargs$transform.par[varList$ind.eta],
 		  subject=rep(seq_len(Dargs$N),Uargs$nchains))
 		.updateElapsed<-proc.time()[["elapsed"]]-.batchStarted
 		.cop$timing$batchUpdate<-.cop$timing$batchUpdate+.updateElapsed

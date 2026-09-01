@@ -48,6 +48,31 @@ observedScore <- (log(observed(half + step)) - log(observed(half - step))) /
   (2 * step)
 stopifnot(abs(posteriorScore - observedScore) < 2e-7)
 
+## Independent Gamma-shape Fisher oracle.  It uses direct midpoint integration
+## over the fixed reference U and never calls the score implementation.
+gammaShape <- 2.7; gammaSd <- .45; gammaY <- .82; gammaSigma <- .16
+gammaGrid <- (seq_len(250000L) - .5) / 250000L
+gammaEta <- function(shape) {
+  scale <- gammaSd / sqrt(shape)
+  stats::qgamma(gammaGrid, shape = shape, scale = scale) - shape * scale
+}
+gammaLogResponse <- function(shape)
+  stats::dnorm(gammaY, mean = exp(gammaEta(shape)), sd = gammaSigma,
+    log = TRUE)
+gammaLogWeight <- gammaLogResponse(gammaShape)
+gammaWeight <- exp(gammaLogWeight - max(gammaLogWeight))
+gammaWeight <- gammaWeight / sum(gammaWeight)
+gammaStep <- 1e-5
+gammaCompleteScore <- (gammaLogResponse(gammaShape + gammaStep) -
+  gammaLogResponse(gammaShape - gammaStep)) / (2 * gammaStep)
+gammaPosteriorScore <- sum(gammaWeight * gammaCompleteScore)
+gammaObserved <- function(shape)
+  mean(exp(gammaLogResponse(shape)))
+gammaObservedScore <- (log(gammaObserved(gammaShape + gammaStep)) -
+  log(gammaObserved(gammaShape - gammaStep))) / (2 * gammaStep)
+gammaFisherError <- abs(gammaPosteriorScore - gammaObservedScore)
+stopifnot(gammaFisherError < 2e-6)
+
 ## Shared hybrid score: only the fixed-reference path coordinates are
 ## numerical; ordinary margin, dependence and residual coordinates remain
 ## analytic. Compare the complete internal score with the former global
@@ -181,5 +206,5 @@ stopifnot(copulaMarginHasMovingSupport(state2$margins[[3L]]),
   all(is.finite(fit2@results@fixed.effects)))
 
 cat(sprintf(paste0("moving-support score-SA checks passed; Fisher error %.3g, ",
-  "hybrid score error %.3g\n"),
-  abs(posteriorScore - observedScore), hybridError))
+  "Gamma-shape Fisher error %.3g, hybrid score error %.3g\n"),
+  abs(posteriorScore - observedScore), gammaFisherError, hybridError))

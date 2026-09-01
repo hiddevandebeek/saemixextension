@@ -6,10 +6,10 @@
 copulaClear <- function() rm(list = ls(.cop), envir = .cop)
 
 copulaPopulation <- function(vine, margins = NULL, sd = NULL,
-                             scale = c("auto", "transformed-additive"),
+                             scale = c("auto", "transformed-additive", "parameter"),
                              conditioning = NULL,
                              populationAlgorithm = "score-sa",
-                             scoreScale = 0.05, scoreFiniteDifference = 1e-4,
+                             scoreScale = "auto", scoreFiniteDifference = 1e-4,
                              scoreProjection = 24, scoreGainScale = 0.2,
                              scoreGainPower = 0.8, scoreGainOffset = 30,
                              scoreBurn = 50L, ...) {
@@ -47,13 +47,13 @@ copulaVineForMargins <- function(vine, margins) {
 
 copulaSet <- function(vine, margins = NULL, sd = NULL,
                       conditioning = NULL,
-                      populationScale = c("auto", "transformed-additive"),
+                      populationScale = c("auto", "transformed-additive", "parameter"),
                       populationAlgorithm = "score-sa",
                       likelihoodTarget = "joint", familySet = NULL,
                       selectStructure = FALSE, refitEvery = 1L,
                       activeFrom = 1L, fitFrom = 1L,
                       warmStartOnActivate = FALSE, guard = FALSE,
-                      numericalPolicy = "exact", scoreScale = 0.05,
+                      numericalPolicy = "exact", scoreScale = "auto",
                       scoreFiniteDifference = 1e-4, scoreProjection = 24,
                       scoreGainScale = 0.2, scoreGainPower = 0.8,
                       scoreGainOffset = 30, scoreBurn = 50L, ...) {
@@ -104,26 +104,48 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
   }
   dEta <- d - dConditioning
 
+  naturalMargins <- !is.null(margins) && all(vapply(margins,
+    inherits, logical(1), "saemix_natural_parameter_margin"))
+  etaMargins <- !is.null(margins) && all(vapply(margins,
+    inherits, logical(1), "saemix_copula_margin"))
+  if (identical(populationScale, "auto")) populationScale <-
+    if (naturalMargins) "parameter" else "transformed-additive"
   if (is.null(margins)) {
     if (is.null(sd) || length(sd) != d || any(!is.finite(sd)) || any(sd <= 0))
       stop("supply one margin per coordinate or positive Gaussian scales")
     margins <- lapply(sd, copulaMarginNormal)
+  } else if (identical(populationScale, "parameter")) {
+    if (!naturalMargins || !is.null(sd) || length(margins) != d)
+      stop("parameter-scale fitting requires one natural margin per coordinate")
+    if (dConditioning > 0L)
+      stop("parameter-scale conditioning margins are not yet enabled")
+    lapply(margins, copulaNaturalMarginValidate)
   } else {
     if (!is.null(sd) || !is.list(margins) || length(margins) != d)
       stop("supply exactly one margin per vine coordinate")
+    if (!etaMargins)
+      stop("transformed-additive fitting requires eta-margin objects")
     lapply(margins, copulaMarginValidate)
   }
-  etaMargins <- margins[seq_len(dEta)]
-  if (any(!vapply(etaMargins, `[[`, logical(1), "centered")) ||
-      any(vapply(etaMargins, function(m)
-        any(m$free & m$roles == "location"), logical(1))) ||
-      any(vapply(etaMargins, `[[`, character(1), "type") != "continuous") ||
-      any(!vapply(etaMargins, `[[`, logical(1), "scale_is_sd")))
-    stop("eta margins must be centered continuous laws with finite SD scales")
+  if (identical(populationScale, "transformed-additive")) {
+    etaMargins <- margins[seq_len(dEta)]
+    if (any(!vapply(etaMargins, `[[`, logical(1), "centered")) ||
+        any(vapply(etaMargins, function(m)
+          any(m$free & m$roles == "location"), logical(1))) ||
+        any(vapply(etaMargins, `[[`, character(1), "type") != "continuous") ||
+        any(!vapply(etaMargins, `[[`, logical(1), "scale_is_sd")))
+      stop("eta margins must be centered continuous laws with finite SD scales")
+  }
 
   vine <- copulaVineForMargins(vine, margins)
   if (!copulaIsFullGaussianVine(vine, d))
     stop("score-sa requires a fixed full Gaussian R-vine")
+  scoreScaleRequested <- scoreScale
+  scoreScaleAutomatic <- is.character(scoreScale) &&
+    length(scoreScale) == 1L && identical(tolower(scoreScale), "auto")
+  if (is.character(scoreScale) && !scoreScaleAutomatic)
+    stop("scoreScale must be 'auto' or one positive numeric value")
+  if (scoreScaleAutomatic) scoreScale <- 1
   numericScalar <- function(x, positive = FALSE) length(x) == 1L &&
     is.finite(x) && (!positive || x > 0)
   if (!numericScalar(scoreScale, TRUE) ||
@@ -136,7 +158,8 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
       is.na(scoreBurn) || scoreBurn < 0)
     stop("invalid score stochastic-approximation controls")
 
-  etaScale <- copulaMarginScales(margins)[seq_len(dEta)]
+  etaScale <- if (identical(populationScale, "parameter"))
+    rep(.3, dEta) else copulaMarginScales(margins)[seq_len(dEta)]
   etaCorrelation <- copulaGaussianRvineCor(vine, d)[seq_len(dEta),
     seq_len(dEta), drop = FALSE]
   proposalOmega <- diag(etaScale, dEta) %*% etaCorrelation %*%
@@ -144,13 +167,17 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
 
   copulaClear()
   values <- list(vine = vine, margins = margins,
-    populationScale = "transformed-additive", populationAlgorithm = "score-sa",
+    populationScale = populationScale, populationAlgorithm = "score-sa",
     likelihoodTarget = "joint", numericalPolicy = "exact",
     d = d, dEta = dEta, dConditioning = dConditioning,
     conditioning = conditioningValues,
     conditioningName = as.character(conditioningNames),
-    sd = copulaMarginScales(margins), proposalOmega = proposalOmega,
+    sd = if (identical(populationScale, "parameter")) rep(NA_real_, d) else
+      copulaMarginScales(margins), proposalOmega = proposalOmega,
     scoreScale = as.numeric(scoreScale),
+    scoreScaleRequested = scoreScaleRequested,
+    scoreScaleSource = if (scoreScaleAutomatic)
+      "unit-after-finite-diagonal-score-metric" else "numeric-override",
     scoreFiniteDifference = as.numeric(scoreFiniteDifference),
     scoreProjection = as.numeric(scoreProjection),
     scoreGainScale = as.numeric(scoreGainScale),
@@ -229,7 +256,8 @@ copulaSnapshot <- function(state = copulaGet(), etaIndex = NULL,
     "lastJoint", "npar.margin", "npar.vine", "estimatedMargins",
     "estimatedVine", "timing", "trace", "populationScale", "proposalOmega",
     "likelihoodTarget", "numericalPolicy", "populationAlgorithm",
-    "scoreScale", "scoreFiniteDifference", "scoreProjection",
+    "scoreScale", "scoreScaleRequested", "scoreScaleSource",
+    "scoreFiniteDifference", "scoreProjection",
     "scoreGainScale", "scoreGainPower", "scoreGainOffset", "scoreBurn",
     "scoreState", "rwProposalFrozen", "rwProposalFreezeIteration",
     "rwBlockSizeFrozen")
@@ -318,7 +346,11 @@ populationRandPhi <- function(object, predictor) {
 
 copulaOmega <- function() {
   correlation <- copulaGaussianRvineCor(.cop$vine, .cop$d)
-  scale <- copulaMarginScales(.cop$margins)[seq_len(.cop$dEta)]
+  scale <- if (identical(.cop$populationScale, "parameter"))
+    as.numeric(.cop$sd[seq_len(.cop$dEta)]) else
+    copulaMarginScales(.cop$margins)[seq_len(.cop$dEta)]
+  if (any(!is.finite(scale)) || any(scale <= 0))
+    scale <- sqrt(diag(.cop$proposalOmega))[seq_len(.cop$dEta)]
   correlation <- correlation[seq_len(.cop$dEta), seq_len(.cop$dEta),
     drop = FALSE]
   diag(scale, .cop$dEta) %*% correlation %*% diag(scale, .cop$dEta)

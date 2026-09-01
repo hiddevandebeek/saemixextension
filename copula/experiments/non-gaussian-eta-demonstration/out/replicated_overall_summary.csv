@@ -1,0 +1,2 @@
+"n","flexible_likelihood_better","likelihood_gain_median","likelihood_gain_lower","likelihood_gain_upper","likelihood_gain_over_2mcse","gamma_selected_count","gamma_shape_median","gamma_sd_median","gaussian_tail_probability_median","flexible_tail_probability_median","runtime_ratio_median"
+10,10,7.16063101104761,1.65086161362922,10.4511690823662,10,7,2.52136894817482,2.73233821856224,0.118645,0.11079,2.01997027079988

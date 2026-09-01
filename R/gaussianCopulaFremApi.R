@@ -1,14 +1,35 @@
 ## Public constructor for the fixed Gaussian-copula score model.
 
 gaussianCopulaFrem <- function(etaSd = NULL, etaMargins = NULL,
+                               parameterMargins = NULL,
                                covariates = NULL,
                                covariateMargins = "auto",
                                correlation = NULL, structure = NULL,
                                covariateNames = NULL,
-                               scoreScale = 0.05, scoreBurn = 50L,
+                               scoreScale = "auto", scoreBurn = 50L,
                                gainScale = 0.2, gainPower = 0.8,
                                finiteDifference = 1e-4,
                                projection = 24) {
+  if (!is.null(parameterMargins)) {
+    if (!is.null(etaSd) || !is.null(etaMargins) || !is.null(covariates))
+      stop("parameterMargins cannot be combined with etaSd, etaMargins, or covariates")
+    if (!is.list(parameterMargins) || length(parameterMargins) < 2L)
+      stop("parameterMargins must contain at least two natural-scale margins")
+    lapply(parameterMargins, copulaNaturalMarginValidate)
+    d <- length(parameterMargins)
+    if (is.null(correlation)) correlation <- diag(d)
+    correlation <- copulaValidateCorrelation(correlation)
+    if (nrow(correlation) != d)
+      stop("correlation dimension must equal the number of parameter margins")
+    if (is.null(structure)) structure <- rvinecopulib::cvine_structure(seq_len(d))
+    vine <- copulaGaussianRvineFromCor(correlation, structure)
+    return(copulaPopulation(vine, margins = parameterMargins,
+      scale = "parameter", populationAlgorithm = "score-sa",
+      scoreScale = scoreScale, scoreBurn = scoreBurn,
+      scoreGainScale = gainScale, scoreGainPower = gainPower,
+      scoreFiniteDifference = finiteDifference,
+      scoreProjection = projection))
+  }
   if (is.null(etaMargins)) {
     if (is.null(etaSd) || !length(etaSd) ||
         any(!is.finite(etaSd)) || any(etaSd <= 0))

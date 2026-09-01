@@ -1,71 +1,67 @@
-# Non-Gaussian eta demonstration
+# Free natural-parameter margin study
 
-## Question
+## Model and workflow
 
-Does a fitted non-Gaussian eta margin recover population tails and predictive
-tails that a Gaussian eta model misses, while retaining the same structural,
-residual and dependence models?
+Individual clearance is generated directly as Gamma on its natural additive
+scale, with shape 2.5 and geometric mean 3.5. No Gamma or Student variable is
+exponentiated. The `saemix` parameter transform is used only as a reversible
+internal coordinate map; the natural density and its exact Jacobian define the
+same likelihood under identity or log storage.
 
-## Design
+Ten untouched data-generating seeds contain 180 subjects with eight IV
+one-compartment observations each. Every dataset follows the realistic
+screen-and-refit workflow:
 
-One illustrative dataset contains 180 subjects and eight IV one-compartment PK
-observations per subject. Volume has a Normal eta. Clearance has a centred Gamma
-eta with shape 2.5 and standard deviation 0.45:
+1. fit ordinary `saemix` with lognormal individual clearance;
+2. draw full individual conditional distributions from that fit;
+3. screen all registered positive clearance families (lognormal, Gamma and
+   Weibull) by posterior likelihood reweighting;
+4. start a fresh SAEM fit with the selected family, resetting all SA/MCMC state
+   while retaining the standard estimates only as numerical starting values;
+5. estimate all continuous parameters for 1,000 exploratory plus 500
+   decreasing-gain iterations.
 
-\[
-\eta_{CL}=G-E(G),\qquad G\sim\mathrm{Gamma}(2.5,\;0.45/\sqrt{2.5}).
-\]
+Volume remains standard in this targeted clearance study. Family screening is
+support-based and independent of `transform.par`.
 
-Thus `E(eta_CL)=0`; on `CL_i=TVCL exp(eta_CL,i)` the distribution is bounded
-below and right-skewed. The generating correlation between the latent Normal
-scores for volume and clearance is 0.35. The proportional residual standard
-deviation is 0.12.
+## Principled score metric
 
-Two fixed Gaussian-copula score-SA models were fitted for 1,000 plus 500
-iterations from separate fresh starts:
+The historical scalar `scoreScale = 0.05` is replaced by `scoreScale = "auto"`.
+During the finite learning period, the implementation estimates a regularized
+diagonal empirical score-information matrix and uses its inverse as
+$A_k\approx I(\theta_k)^{-1}$. Eigenvalues are bounded away from zero and
+infinity. The metric and MCMC proposal tuning stop adapting before the
+decreasing-gain phase; population parameters remain free throughout.
 
-1. Normal margins for both etas;
-2. Normal volume eta and centred-Gamma clearance eta.
+## Ten-dataset results
 
-This is a fixed-family demonstration. It does not claim that the current
-automatic Normal/Student/Laplace screen selects Gamma.
+- The free-margin fit had higher observed log likelihood in 10/10 datasets;
+  every gain exceeded twice the combined likelihood Monte Carlo error.
+- Median likelihood gain was 7.16 (2.5th--97.5th percentiles 1.65--10.45).
+- Clearance selection chose Gamma in 7 datasets and Weibull in 3; all selected
+  volume margins remained lognormal.
+- The generating probability `P(CL > 8)` is 0.100. Median fitted probability
+  was 0.111 for the free model and 0.119 for lognormal clearance.
+- The free fit had lower overall and extreme VPC log-RMSE in all 10 datasets.
+- Median VPC log-RMSE across the 1st, 10th, 50th, 90th and 99th percentiles was
+  0.219 for free margins and 0.811 for lognormal clearance.
+- Median extreme-quantile VPC log-RMSE was 0.266 versus 1.266.
+- Median final-fit runtime ratio was 2.02 (48.6 seconds for the selected-family
+  fit); median screening time was 59.5 seconds.
 
-## Results
+## Verification
 
-- Observed log likelihood: -265.45 (Gaussian) versus -247.46 (centred Gamma),
-  a gain of 17.99. The separate likelihood Monte Carlo standard errors were
-  0.44 and 0.44.
-- The generating probability `P(|eta_CL| > 1)` was 0.0342. The fitted values
-  were 0.0133 for the Gaussian margin and 0.0212 for the centred-Gamma margin.
-- VPC log-RMSE across the 1st, 10th, 50th, 90th and 99th percentiles was 0.939
-  for the Gaussian fit and 0.499 for the centred-Gamma fit.
-- Extreme-quantile VPC log-RMSE (1st and 99th percentiles) was 1.477 versus
-  0.767.
+- Natural Gamma, lognormal and Weibull densities and quantiles agree under
+  identity and log `saemix` coordinates after the exact Jacobian.
+- Natural Gamma normalizes to one under both mappings.
+- The direct natural-parameter E-step, fixed-reference score, fresh fit and
+  observed-likelihood scorer pass an end-to-end PK test.
+- The analytic score agrees with the global numerical score to the stated
+  regression tolerance.
+- All 20 final validation fits passed post-learning projection, backtracking,
+  no-move and metric-freeze checks.
 
-## Shared score and E-step acceleration
+The earlier exponentiated centred-Gamma experiment is not used as evidence.
 
-The original moving-support implementation used global centered differences
-for all seven fitted coordinates and took 97.69 seconds for this same
-1,500-iteration Gamma fit. The shared implementation now:
-
-1. retains analytic scores for fixed-support margins, Gaussian dependence and
-   residual error;
-2. differentiates the structural response once per referenced eta coordinate
-   and propagates it to location and moving-margin parameters by the chain rule;
-3. caches the Gaussian correlation and Cholesky factor once per E-step
-   iteration.
-
-The final centred-Gamma fit took 57.59 seconds, a 41.0% reduction, versus 38.72
-seconds for the Gaussian fit. The optimized and original implementations
-reached the same printed estimates, likelihood and predictive metrics. The
-hybrid score matched the former global finite-difference oracle within
-`3.35e-10`; the cached E-step prior matched the literal density within `2e-12`.
-
-The centred-Gamma fit therefore recovers the asymmetric population shape and
-substantially improves the predictive tails. It does not perfectly recover the
-generating shape from one finite dataset (estimated shape 3.96 versus 2.5), so
-this figure should remain an illustration until supported by repeated-dataset
-results.
-
-Run `Rscript --vanilla run.R --force` to refit. Without `--force`, the script
-uses the cached fits and regenerates the analysis and figure.
+Run `run_replicates.R 10 5 --force` to regenerate the fits and
+`summarize_replicates.R` to regenerate the summaries and figure.

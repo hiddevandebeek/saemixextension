@@ -72,13 +72,19 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	mean.phiM<-do.call(rbind,rep(list(mean.phi),Uargs$nchains))
 	phiM[,varList$ind0.eta]<-mean.phiM[,varList$ind0.eta]
 	if (useCop) {
-		priorKernel <- if (!jointConditioning &&
+		naturalKernel <- if (!jointConditioning &&
+		    identical(population$populationScale, "parameter"))
+			copulaNaturalWorkingPriorKernel(population$vine, population$margins,
+				mean.phiM[, varList$ind.eta, drop=FALSE],
+				Dargs$transform.par[varList$ind.eta]) else NULL
+		priorKernel <- if (!is.null(naturalKernel)) naturalKernel else if (!jointConditioning &&
 		    copulaIsFullGaussianVine(population$vine, population$d))
 			copulaGaussianFremContinuousPriorKernel(
 				population$vine, population$margins) else NULL
 		Ueta <- if (jointConditioning) NULL else if (!is.null(priorKernel))
 			priorKernel$negative else function(e) copulaUeta(e)
 	} else {
+		naturalKernel <- NULL
 		priorKernel <- NULL
 		Ueta <- function(e) 0.5*rowSums(e*(e%*%somega))
 	}
@@ -98,6 +104,7 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 		rep(FALSE,nrow(etaM))
 	for(u in seq_len(opt$nbiter.mcmc[1])) { # 1er noyau
 		etaMc<-if(!is.null(conditionalKernel)) conditionalKernel$random()
+		else if(!is.null(naturalKernel)) naturalKernel$random()
 		else if(useCop) copulaRandEta(Dargs$NM,
 			if (jointConditioning) .conditioningM else NULL) else
 			matrix(rnorm(Dargs$NM*nb.etas),ncol=nb.etas)%*%chol.omega
