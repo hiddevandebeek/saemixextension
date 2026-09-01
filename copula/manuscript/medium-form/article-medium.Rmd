@@ -23,9 +23,9 @@ abstract: |
   remained within 0.47%. Relative to Gaussian FREM, mean differences in
   observed log likelihood were 4.30--9.41 under non-Gaussian data-generating
   distributions and -0.06 under a Gaussian data-generating distribution. Among
-  In 100 independent high-CRP prediction datasets, flexible margins had lower
-  VPC log-RMSE in 88; median RMSE was 0.086 versus 0.328 for Gaussian FREM, and
-  the mean paired difference was 0.247 (95% CI 0.210--0.285). These results
+  In 200 independent high-CRP prediction datasets, flexible margins had lower
+  VPC log-RMSE in 174; median RMSE was 0.085 versus 0.336 for Gaussian FREM, and
+  the mean paired difference was 0.246 (95% CI 0.219--0.272). These results
   indicate that latent margin selection can be separated from fixed-model
   likelihood estimation and that marginal assumptions can materially affect
   conditional prediction. The fitted conditional model has an exact
@@ -545,7 +545,7 @@ fixed-family NLME study.
 
 ### Conditional prediction
 
-One hundred independently generated $N=300$ datasets used Gamma CRP, Normal albumin
+Two hundred independently generated $N=300$ datasets used Gamma CRP, Normal albumin
 and CRP--clearance score correlation 0.55. A stock Gaussian NLME fit supplied
 only finite initial values; Gaussian and flexible-margin FREM were then fitted
 afresh for 1,500 score iterations. Conditional-median clearance was evaluated
@@ -633,24 +633,24 @@ accepted only when ranking and overlap diagnostics were resolved.
 
 Mean $V$, $CL$ and residual estimates were nearly identical between arms
 (10.021, 3.014 and 0.120). At the 99.9th CRP percentile, generating median
-clearance was 5.44. Across fits, the flexible median was 5.27 with a pointwise
-95% interval of 4.85--5.90, whereas Gaussian FREM gave 7.57 (6.50--9.19;
+clearance was 5.44. Across fits, the flexible median was 5.28 with a pointwise
+95% interval of 4.75--5.90, whereas Gaussian FREM gave 7.60 (6.41--9.36;
 Figure 1A).
 
-Flexible margins had lower conditional VPC log-RMSE in 88/100 paired fits.
-Median RMSE was 0.086 versus 0.328 for Gaussian FREM; the mean paired difference
-was 0.247 (95% CI 0.210--0.285), and the median relative reduction was 72.6%
+Flexible margins had lower conditional VPC log-RMSE in 174/200 paired fits.
+Median RMSE was 0.085 versus 0.336 for Gaussian FREM; the mean paired difference
+was 0.246 (95% CI 0.219--0.272), and the median relative reduction was 74.4%
 (Figure 1B).
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.98\linewidth]{figures/figure1_replicated_conditional.png}
-\caption{Conditional results across 100 independently fitted datasets. (A)
+\caption{Conditional results across 200 independently fitted datasets. (A)
 Median FFEM/conditional relationships; ribbons are pointwise 2.5th--97.5th
 percentiles across fits and the black line is the generating relationship. (B)
 Replicated conditional VPC. Grey regions and black symbols show the generating
 10th (triangle), 50th (circle) and 90th (square) percentiles. Coloured dashed
-lines are median fitted quantiles across the 100 fits; coloured ribbons are
+lines are median fitted quantiles across the 200 fits; coloured ribbons are
 pointwise 2.5th--97.5th percentiles for the fitted median.}
 \end{figure}
 
@@ -680,7 +680,7 @@ The clearest practical difference was prediction conditional on covariate-tail
 values. A misspecified marginal CDF changes the Gaussian score assigned to a
 covariate value and therefore changes the fitted distribution
 $p(\eta_{\mathrm{par}}\mid c)$ even when the first two moments are estimated
-accurately. Across 100 fits, flexible margins substantially reduced conditional
+accurately. Across 200 fits, flexible margins substantially reduced conditional
 VPC-quantile error and contained the generating upper-tail relationship within
 their between-fit band.
 

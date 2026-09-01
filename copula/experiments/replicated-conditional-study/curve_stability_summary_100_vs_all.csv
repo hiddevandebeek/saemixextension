@@ -1,0 +1,4 @@
+"arm","max_abs_median_change","max_abs_lower_change","max_abs_upper_change"
+"flexible",0.0205128629829119,0.106309980978431,0.0163825023982347
+"gaussian",0.0250070303255914,0.0857248029591071,0.170751062424046
+"truth",0,0,0

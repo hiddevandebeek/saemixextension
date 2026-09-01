@@ -42,13 +42,13 @@ summarize_curve <- function(value) do.call(rbind, lapply(split(value,
     CRP = x$CRP[1L], t(limits))
 }))
 curveSummary <- summarize_curve(curves)
-curve50 <- summarize_curve(subset(curves, replicate <= 50L))
-curveStability <- merge(curve50, curveSummary,
-  by = c("arm", "probability", "CRP"), suffixes = c("_50", "_all"))
+curve100 <- summarize_curve(subset(curves, replicate <= 100L))
+curveStability <- merge(curve100, curveSummary,
+  by = c("arm", "probability", "CRP"), suffixes = c("_100", "_all"))
 for (name in c("lower", "median", "upper"))
   curveStability[[paste0("change_", name)]] <-
     curveStability[[paste0(name, "_all")]] -
-    curveStability[[paste0(name, "_50")]]
+    curveStability[[paste0(name, "_100")]]
 stabilitySummary <- do.call(rbind, lapply(split(curveStability,
   curveStability$arm), function(x) data.frame(arm = x$arm[1L],
     max_abs_median_change = max(abs(x$change_median)),
@@ -83,10 +83,10 @@ pairedSummary <- data.frame(n = nrow(paired),
 
 write.csv(curves, file.path(root, "curves_all.csv"), row.names = FALSE)
 write.csv(curveSummary, file.path(root, "curves_summary.csv"), row.names = FALSE)
-write.csv(curveStability, file.path(root, "curve_stability_50_vs_all.csv"),
+write.csv(curveStability, file.path(root, "curve_stability_100_vs_all.csv"),
   row.names = FALSE)
 write.csv(stabilitySummary, file.path(root,
-  "curve_stability_summary_50_vs_all.csv"), row.names = FALSE)
+  "curve_stability_summary_100_vs_all.csv"), row.names = FALSE)
 write.csv(vpc, file.path(root, "vpc_all.csv"), row.names = FALSE)
 write.csv(vpcSummary, file.path(root, "vpc_summary.csv"), row.names = FALSE)
 write.csv(metrics, file.path(root, "metrics_all.csv"), row.names = FALSE)
