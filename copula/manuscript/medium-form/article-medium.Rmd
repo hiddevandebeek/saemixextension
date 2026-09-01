@@ -631,6 +631,10 @@ Both methods recovered $V$, $CL$ and residual error in the additional example.
 The paired joint log likelihoods were -4091.6 (Gaussian) and -4041.7 (flexible),
 a descriptive non-nested comparison.
 
+The exact Gaussian-FREM-to-FFEM relationship followed the centre of the data
+but increased too rapidly in the upper CRP tail; the flexible-margin
+translation remained close to the generating conditional median (Figure 1A).
+
 In the independent high-CRP population, Gaussian FREM underestimated the lower
 response percentile and overestimated the upper response percentile at later
 times. The flexible-margin predictions were closer to the generating
@@ -640,14 +644,16 @@ integrated out under both fitted joint distributions.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.98\linewidth]{figures/figure3_gamma_tail_vpc.png}
-\caption{Conditional VPC in an independent population above the 95th CRP
-percentile. Grey shading and the black line show the generating 10th--90th
-percentile interval and median. Coloured solid and dashed lines show fitted
-median and 10th/90th percentiles; black points show empirical quantiles in the
-independent validation sample. Only CRP was available for prediction; albumin
-was integrated out. Flexible-margin FREM reduced log-scale VPC RMSE from 0.266
-to 0.123.}
+\textbf{A}\\[-0.4em]
+\includegraphics[width=0.55\linewidth]{figures/figure2_conditional_relationship.png}\\[0.4em]
+\textbf{B}\\[-0.4em]
+\includegraphics[width=0.88\linewidth]{figures/figure3_gamma_tail_vpc.png}
+\caption{Conditional translation and prediction in the CRP example. (A) Exact
+FFEM/conditional median relationship; grey points are latent simulated
+clearances. (B) Conditional VPC above the 95th CRP percentile. Grey and black
+show the generating distribution; coloured lines show fitted quantiles and
+black points independent validation quantiles. Albumin was integrated out.
+Flexible margins reduced log-scale VPC RMSE from 0.266 to 0.123.}
 \end{figure}
 
 ## Numerical verification
