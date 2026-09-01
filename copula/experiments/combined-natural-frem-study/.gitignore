@@ -1,0 +1,5 @@
+pilot/
+pilot-out/
+replicates/
+*-workers.log
+*-last-run-status.rds

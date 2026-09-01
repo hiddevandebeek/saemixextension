@@ -32,15 +32,29 @@ copulaNaturalPosteriorData <- function(object, draws) {
   eta <- copulaFlattenEtaDraws(draws)
   phi <- predictor + eta
   transform <- as.integer(object["model"]["transform.par"][index])
+  conditioning <- if ((state$dConditioning %||% 0L) > 0L)
+    as.matrix(state$conditioning)[rep(seq_len(n), samples), , drop = FALSE] else
+    matrix(numeric(), n * samples, 0L)
   list(n = n, samples = samples, eta = eta, predictor = predictor,
     typical = copulaWorkingToNatural(predictor, transform),
-    natural = copulaWorkingToNatural(phi, transform), transform = transform)
+    natural = copulaWorkingToNatural(phi, transform), transform = transform,
+    conditioning = conditioning)
 }
 
 copulaNaturalBridgeMetric <- function(margins, data, incumbent) {
-  candidate <- -copulaNaturalWorkingPriorKernel(incumbent$vine, margins,
-    data$predictor, data$transform)$negative(data$eta)
-  baseline <- copulaGaussianFremLogPrior(data$eta, incumbent$vine,
+  hasConditioning <- (incumbent$dConditioning %||% 0L) > 0L
+  candidateMargins <- if (hasConditioning)
+    c(margins, incumbent$margins[incumbent$dEta +
+      seq_len(incumbent$dConditioning)]) else margins
+  candidate <- if (hasConditioning)
+    copulaNaturalFremLogPrior(data$eta, data$conditioning, incumbent$vine,
+      candidateMargins, incumbent$dEta, data$predictor, data$transform,
+      "joint") else
+    -copulaNaturalWorkingPriorKernel(incumbent$vine, margins,
+      data$predictor, data$transform)$negative(data$eta)
+  baselineState <- if (hasConditioning)
+    cbind(data$eta, data$conditioning) else data$eta
+  baseline <- copulaGaussianFremLogPrior(baselineState, incumbent$vine,
     incumbent$margins, incumbent$dEta, "joint")
   copulaPosteriorBridgeMetricFromLogWeight(matrix(candidate - baseline,
     nrow = data$n, ncol = data$samples))
@@ -89,8 +103,13 @@ copulaSelectParameterMargins <- function(object, supports, candidates = NULL,
   if (!inherits(object, "SaemixObject")) stop("object must be a fitted SaemixObject")
   state <- copulaGet(object)
   if (!identical(state$populationScale, "transformed-additive") ||
-      state$dConditioning > 0L || !copulaIsFullGaussianVine(state$vine, state$d))
-    stop("natural-margin screening currently requires an unconditioned standard incumbent")
+      !copulaIsFullGaussianVine(state$vine, state$d))
+    stop("natural-margin screening requires a standard transformed-additive incumbent")
+  if ((state$dConditioning %||% 0L) > 0L &&
+      (anyNA(state$conditioning) || any(vapply(
+        state$margins[state$dEta + seq_len(state$dConditioning)],
+        function(m) !identical(m$type, "continuous"), logical(1)))))
+    stop("natural-margin screening with covariates requires complete continuous conditioning")
   supports <- rep_len(as.character(supports), state$dEta)
   if (any(!supports %in% c("real", "positive", "unit")))
     stop("supports must be real, positive, or unit")
@@ -136,14 +155,20 @@ copulaSelectParameterMargins <- function(object, supports, candidates = NULL,
     validationDiag$minimumMcmcEssFraction >= minimumPosteriorEssFraction
   resolved <- all(table$eligible) && mixing && gap > 2 * selectionMcse
   margins <- fitted[[selected]]$margins
-  population <- gaussianCopulaFrem(parameterMargins = margins,
-    correlation = copulaGaussianRvineCor(state$vine, state$d),
-    structure = state$vine$structure,
-    scoreScale = "auto", scoreBurn = state$scoreBurn %||% 50L,
-    gainScale = state$scoreGainScale %||% .2,
-    gainPower = state$scoreGainPower %||% .8,
-    finiteDifference = state$scoreFiniteDifference %||% 1e-4,
-    projection = state$scoreProjection %||% 24)
+  finalMargins <- if ((state$dConditioning %||% 0L) > 0L)
+    c(margins, state$margins[state$dEta + seq_len(state$dConditioning)]) else
+    margins
+  population <- copulaPopulation(state$vine, margins = finalMargins,
+    scale = "parameter",
+    conditioning = if ((state$dConditioning %||% 0L) > 0L)
+      list(values = state$conditioning,
+        variableName = state$conditioningName) else NULL,
+    populationAlgorithm = "score-sa", scoreScale = "auto",
+    scoreBurn = state$scoreBurn %||% 50L,
+    scoreGainScale = state$scoreGainScale %||% .2,
+    scoreGainPower = state$scoreGainPower %||% .8,
+    scoreFiniteDifference = state$scoreFiniteDifference %||% 1e-4,
+    scoreProjection = state$scoreProjection %||% 24)
   answer <- list(selected = selected, table = table,
     families = fitted[[selected]]$families, margins = margins,
     population = population, posteriorDrawsPerPool = posteriorDraws,

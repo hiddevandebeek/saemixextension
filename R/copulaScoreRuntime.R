@@ -89,7 +89,7 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
   .cop$curConditioningComplete <- conditioning
   referenceUniform <- matrix(NA_real_, nrow(eta), .cop$d)
   if (identical(.cop$populationScale, "parameter")) {
-    if (!hasDesign || .cop$dConditioning > 0L)
+    if (!hasDesign)
       stop("parameter-scale score fitting requires a complete design-aware eta block")
     predictor <- copulaLocation(design, as.numeric(beta), locationMap)
     typical <- copulaWorkingToNatural(predictor, .cop$transform)

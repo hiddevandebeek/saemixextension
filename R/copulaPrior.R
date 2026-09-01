@@ -104,8 +104,12 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
   }
   dEta <- d - dConditioning
 
-  naturalMargins <- !is.null(margins) && all(vapply(margins,
-    inherits, logical(1), "saemix_natural_parameter_margin"))
+  naturalMargins <- !is.null(margins) && dEta > 0L &&
+    all(vapply(margins[seq_len(dEta)], inherits, logical(1),
+      "saemix_natural_parameter_margin")) &&
+    (dConditioning == 0L || all(vapply(
+      margins[dEta + seq_len(dConditioning)], inherits, logical(1),
+      "saemix_copula_margin")))
   etaMargins <- !is.null(margins) && all(vapply(margins,
     inherits, logical(1), "saemix_copula_margin"))
   if (identical(populationScale, "auto")) populationScale <-
@@ -116,10 +120,18 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
     margins <- lapply(sd, copulaMarginNormal)
   } else if (identical(populationScale, "parameter")) {
     if (!naturalMargins || !is.null(sd) || length(margins) != d)
-      stop("parameter-scale fitting requires one natural margin per coordinate")
-    if (dConditioning > 0L)
-      stop("parameter-scale conditioning margins are not yet enabled")
-    lapply(margins, copulaNaturalMarginValidate)
+      stop(paste0("parameter-scale fitting requires natural margins for ",
+        "individual parameters and ordinary copula margins for conditioning covariates"))
+    lapply(margins[seq_len(dEta)], copulaNaturalMarginValidate)
+    if (dConditioning > 0L) {
+      conditioningMargins <- margins[dEta + seq_len(dConditioning)]
+      lapply(conditioningMargins, copulaMarginValidate)
+      if (any(vapply(conditioningMargins, function(m)
+          !identical(m$type, "continuous"), logical(1))) ||
+          anyNA(conditioningValues))
+        stop(paste0("parameter-scale conditioning currently requires fully ",
+          "observed continuous covariates"))
+    }
   } else {
     if (!is.null(sd) || !is.list(margins) || length(margins) != d)
       stop("supply exactly one margin per vine coordinate")

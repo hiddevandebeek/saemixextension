@@ -528,16 +528,20 @@ copulaGaussianFremPopulationScoreStep <- function(
       copulaLocation(layout$X, candidate$beta, layout$locMap) else
       matrix(candidate$delta, nrow(E), d, byrow = TRUE)
     if (identical(populationScale, "parameter")) {
-      if (d != dEta || any(!is.finite(referenceUniform)))
-        stop("parameter-scale score materialization requires complete reference uniforms")
+      if (any(!is.finite(referenceUniform[, seq_len(dEta), drop = FALSE])))
+        stop("parameter-scale score materialization requires parameter reference uniforms")
       typical <- copulaWorkingToNatural(
         location[, seq_len(dEta), drop = FALSE], layout$transform)
       psi <- copulaNaturalMarginsQuantile(referenceUniform[, seq_len(dEta),
-        drop = FALSE], typical, candidate$margins)
+        drop = FALSE], typical, candidate$margins[seq_len(dEta)])
       absolute <- copulaNaturalToWorking(psi, layout$transform)
-      residual <- absolute - location[, seq_len(dEta), drop = FALSE]
+      residual <- E
+      residual[, seq_len(dEta)] <- absolute -
+        location[, seq_len(dEta), drop = FALSE]
       return(list(residual = residual, absolute = absolute,
-        typical = typical, natural = psi))
+        typical = typical, natural = psi,
+        conditioning = if (d > dEta) E[, dEta + seq_len(d - dEta),
+          drop = FALSE] else matrix(numeric(), nrow(E), 0L)))
     }
     residual <- E - location
     for (j in seq_len(d)) {

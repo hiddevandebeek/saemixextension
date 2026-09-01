@@ -4,9 +4,10 @@
 \title{Declare a Gaussian-Copula FREM Population for saemix}
 \usage{
 gaussianCopulaFrem(etaSd = NULL, etaMargins = NULL,
+  parameterMargins = NULL,
   covariates = NULL, covariateMargins = "auto",
   correlation = NULL, structure = NULL, covariateNames = NULL,
-  scoreScale = 0.05, scoreBurn = 50L,
+  scoreScale = "auto", scoreBurn = 50L,
   gainScale = 0.2, gainPower = 0.8,
   finiteDifference = 1e-4, projection = 24)
 
@@ -16,8 +17,12 @@ copulaGaussianRvineFromCor(correlation, structure = NULL)
 \item{etaSd}{Positive initial standard deviation for each Normal random-effect
 margin. Supply this or \code{etaMargins}.}
 \item{etaMargins}{One declared fixed-support margin per random effect.}
+\item{parameterMargins}{Natural-scale margins for the individual parameters.
+These may be combined with complete continuous \code{covariates}; they cannot
+be combined with \code{etaSd} or \code{etaMargins}.}
 \item{covariates}{Optional numeric matrix with one subject per row. Missing
-values may be \code{NA}.}
+values may be \code{NA} for transformed-additive models. Natural-parameter
+models currently require complete continuous covariates.}
 \item{covariateMargins}{One declared margin per covariate, or \code{"auto"}
 for marginal-AIC selection among Normal, lognormal, Gamma, and Weibull using
 the observed non-missing values. Explicit declarations may contain multiple
@@ -47,10 +52,12 @@ general R-vine, adaptive-selection, or conditional-likelihood controls.
 Automatic family selection applies to continuous covariates. The selected
 family is fixed before stochastic-approximation estimation begins. Eta margins
 are Normal when declared through \code{etaSd}; non-Normal eta families are
-supplied explicitly through \code{etaMargins}.
-After fitting this incumbent, \code{copulaSelectEtaMargins()} can screen
-Normal, Student, and Laplace eta-family combinations from full posterior draws
-and return a fixed declaration for a fresh fit.
+supplied through \code{etaMargins}. Natural individual-parameter margins are
+declared through \code{parameterMargins} and are independent of the internal
+saemix coordinate transform. After fitting a standard incumbent,
+\code{copulaSelectParameterMargins()} can screen support-compatible natural
+families from full posterior draws and return a fixed declaration for a fresh
+fit, including when complete continuous conditioning covariates are present.
 
 Every custom margin must declare its support. Fixed-support margins use
 \code{support_fixed = TRUE}. A proper continuous margin may use
@@ -74,8 +81,14 @@ population <- gaussianCopulaFrem(
   etaSd = c(0.25, 0.30),
   covariates = subjectData[, c("WT", "eGFR")])
 fit <- saemix(model, data, control, population = population)
+
+naturalPopulation <- gaussianCopulaFrem(
+  parameterMargins = list(copulaNaturalMarginLognormal(.25),
+    copulaNaturalMarginGamma(3)),
+  covariates = subjectData[, "CRP", drop = FALSE])
 }
 }
 \seealso{\code{\link{copulaPopulation}},
-\code{\link{copulaSelectEtaMargins}}, \code{\link{saemix}}}
+\code{\link{copulaSelectEtaMargins}},
+\code{\link{copulaSelectParameterMargins}}, \code{\link{saemix}}}
 \keyword{models}

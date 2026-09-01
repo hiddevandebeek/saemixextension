@@ -11,20 +11,50 @@ gaussianCopulaFrem <- function(etaSd = NULL, etaMargins = NULL,
                                finiteDifference = 1e-4,
                                projection = 24) {
   if (!is.null(parameterMargins)) {
-    if (!is.null(etaSd) || !is.null(etaMargins) || !is.null(covariates))
-      stop("parameterMargins cannot be combined with etaSd, etaMargins, or covariates")
+    if (!is.null(etaSd) || !is.null(etaMargins))
+      stop("parameterMargins cannot be combined with etaSd or etaMargins")
     if (!is.list(parameterMargins) || length(parameterMargins) < 2L)
       stop("parameterMargins must contain at least two natural-scale margins")
     lapply(parameterMargins, copulaNaturalMarginValidate)
-    d <- length(parameterMargins)
+    conditioning <- NULL; covMargins <- list()
+    if (!is.null(covariates)) {
+      covariates <- as.matrix(covariates); storage.mode(covariates) <- "double"
+      if (!nrow(covariates) || !ncol(covariates) || any(is.infinite(covariates)) ||
+          anyNA(covariates))
+        stop("natural-parameter FREM covariates must be a complete finite numeric matrix")
+      if (is.character(covariateMargins)) {
+        if (length(covariateMargins) != 1L ||
+            !identical(tolower(covariateMargins), "auto"))
+          stop("character covariateMargins must be 'auto'")
+        covMargins <- copulaFitCovariateMargins(covariates)
+      } else {
+        if (!is.list(covariateMargins) ||
+            length(covariateMargins) != ncol(covariates))
+          stop("covariateMargins must contain one margin per covariate")
+        lapply(covariateMargins, copulaMarginValidate)
+        covMargins <- covariateMargins
+      }
+      if (any(vapply(covMargins, function(m) !identical(m$type, "continuous"),
+          logical(1))))
+        stop("natural-parameter FREM currently requires continuous covariates")
+      if (is.null(covariateNames)) covariateNames <- colnames(covariates)
+      if (is.null(covariateNames) || length(covariateNames) != ncol(covariates))
+        covariateNames <- paste0("COV", seq_len(ncol(covariates)))
+      conditioning <- list(values = covariates,
+        variableName = as.character(covariateNames))
+    } else if (!identical(covariateMargins, "auto")) {
+      stop("covariateMargins requires covariates")
+    }
+    margins <- c(parameterMargins, covMargins); d <- length(margins)
     if (is.null(correlation)) correlation <- diag(d)
     correlation <- copulaValidateCorrelation(correlation)
     if (nrow(correlation) != d)
       stop("correlation dimension must equal the number of parameter margins")
     if (is.null(structure)) structure <- rvinecopulib::cvine_structure(seq_len(d))
     vine <- copulaGaussianRvineFromCor(correlation, structure)
-    return(copulaPopulation(vine, margins = parameterMargins,
-      scale = "parameter", populationAlgorithm = "score-sa",
+    return(copulaPopulation(vine, margins = margins,
+      scale = "parameter", conditioning = conditioning,
+      populationAlgorithm = "score-sa",
       scoreScale = scoreScale, scoreBurn = scoreBurn,
       scoreGainScale = gainScale, scoreGainPower = gainPower,
       scoreFiniteDifference = finiteDifference,

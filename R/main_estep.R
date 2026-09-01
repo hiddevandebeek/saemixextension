@@ -96,9 +96,13 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	conditionalKernel <- NULL
 	if (useCop && jointConditioning &&
 	    copulaIsFullGaussianVine(population$vine, population$d))
-		conditionalKernel <- copulaGaussianFremConditionalKernel(
-			.conditioningM, population$vine, population$margins,
-			population$dEta)
+		conditionalKernel <- if (identical(population$populationScale, "parameter"))
+			copulaNaturalFremConditionalKernel(.conditioningM, population$vine,
+				population$margins, population$dEta,
+				mean.phiM[, varList$ind.eta, drop=FALSE],
+				Dargs$transform.par[varList$ind.eta]) else
+			copulaGaussianFremConditionalKernel(.conditioningM, population$vine,
+				population$margins, population$dEta)
 	if (!is.null(conditionalKernel)) Ueta <- conditionalKernel$negative
 	invalidMovingCurrent <- if(movingEtaScore) !is.finite(Ueta(etaM)) else
 		rep(FALSE,nrow(etaM))

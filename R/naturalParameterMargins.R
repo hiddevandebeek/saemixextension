@@ -243,3 +243,89 @@ copulaNaturalWorkingPriorKernel <- function(vine, margins, predictor,
     typical = typical, transform = transform,
     method = "natural-parameter-working-coordinate-prior")
 }
+
+## Joint natural-parameter/covariate density in saemix working coordinates.
+## The first dEta margins act on natural individual parameters; remaining
+## margins act directly on observed continuous covariates.
+copulaNaturalFremLogPrior <- function(eta, conditioning, vine, margins, dEta,
+    predictor, transform, likelihoodTarget = c("joint", "conditional")) {
+  likelihoodTarget <- match.arg(likelihoodTarget)
+  eta <- as.matrix(eta); conditioning <- as.matrix(conditioning)
+  predictor <- as.matrix(predictor); dEta <- as.integer(dEta)
+  dConditioning <- ncol(conditioning); d <- dEta + dConditioning
+  if (ncol(eta) != dEta || nrow(eta) != nrow(conditioning) ||
+      any(dim(predictor) != dim(eta)) || length(margins) != d ||
+      !copulaIsFullGaussianVine(vine, d))
+    stop("invalid natural-parameter FREM prior dimensions")
+  if (anyNA(eta) || any(!is.finite(eta)) || anyNA(conditioning) ||
+      any(!is.finite(conditioning)))
+    stop("natural-parameter FREM prior requires complete finite rows")
+  transform <- rep_len(as.integer(transform), dEta)
+  phi <- predictor + eta
+  typical <- copulaWorkingToNatural(predictor, transform)
+  psi <- copulaWorkingToNatural(phi, transform)
+  parameter <- copulaNaturalMarginsEvaluate(psi, typical,
+    margins[seq_len(dEta)])
+  covariate <- if (dConditioning)
+    copulaGaussianFremEvaluateMargins(conditioning,
+      margins[dEta + seq_len(dConditioning)]) else
+    list(z = matrix(numeric(), nrow(eta), 0L),
+      logMargin = matrix(numeric(), nrow(eta), 0L), valid = rep(TRUE, nrow(eta)))
+  valid <- parameter$valid & covariate$valid
+  result <- rep(-Inf, nrow(eta)); rows <- which(valid)
+  if (!length(rows)) return(result)
+  z <- cbind(parameter$z, covariate$z)
+  R <- copulaGaussianRvineCor(vine, d)
+  logJoint <- copulaGaussianLogDensity(z[rows, , drop = FALSE], R) -
+    rowSums(stats::dnorm(z[rows, , drop = FALSE], log = TRUE)) +
+    rowSums(parameter$logMargin[rows, , drop = FALSE]) +
+    rowSums(covariate$logMargin[rows, , drop = FALSE]) +
+    rowSums(copulaWorkingLogJacobian(phi[rows, , drop = FALSE], transform))
+  if (identical(likelihoodTarget, "conditional") && dConditioning) {
+    Rc <- R[dEta + seq_len(dConditioning), dEta + seq_len(dConditioning),
+      drop = FALSE]
+    zc <- covariate$z[rows, , drop = FALSE]
+    logCov <- copulaGaussianLogDensity(zc, Rc) -
+      rowSums(stats::dnorm(zc, log = TRUE)) +
+      rowSums(covariate$logMargin[rows, , drop = FALSE])
+    logJoint <- logJoint - logCov
+  }
+  result[rows] <- logJoint
+  result
+}
+
+## Exact conditional-prior kernel for natural parameters given fully observed
+## continuous covariates. Conditioning is Gaussian in latent-score space;
+## quantile maps and the exact working-coordinate Jacobian recover the fitted
+## natural parameter law.
+copulaNaturalFremConditionalKernel <- function(conditioning, vine, margins,
+    dEta, predictor, transform) {
+  conditioning <- as.matrix(conditioning); predictor <- as.matrix(predictor)
+  dEta <- as.integer(dEta); d <- length(margins)
+  if (nrow(conditioning) != nrow(predictor) || ncol(predictor) != dEta ||
+      ncol(conditioning) != d - dEta || anyNA(conditioning))
+    stop("invalid natural-parameter conditional-kernel dimensions")
+  conditional <- copulaGaussianFremConditional(conditioning, vine, margins, dEta)
+  patternState <- conditional$patternState
+  for (key in names(patternState))
+    patternState[[key]]$chol <- chol(patternState[[key]]$covariance)
+  transform <- rep_len(as.integer(transform), dEta)
+  typical <- copulaWorkingToNatural(predictor, transform)
+  parameterMargins <- margins[seq_len(dEta)]
+  negative <- function(eta) -copulaNaturalFremLogPrior(eta, conditioning,
+    vine, margins, dEta, predictor, transform, "conditional")
+  random <- function() {
+    z <- conditional$mean
+    for (state in patternState) {
+      rows <- state$rows
+      z[rows, ] <- z[rows, , drop = FALSE] +
+        matrix(stats::rnorm(length(rows) * dEta), ncol = dEta) %*% state$chol
+    }
+    psi <- copulaNaturalMarginsQuantile(stats::pnorm(z), typical,
+      parameterMargins)
+    copulaNaturalToWorking(psi, transform) - predictor
+  }
+  list(negative = negative, random = random, conditional = conditional,
+    patternState = patternState,
+    method = "natural-parameter-conditional-gaussian-score-kernel")
+}
