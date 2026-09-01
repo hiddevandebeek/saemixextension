@@ -8,7 +8,7 @@ exponentiated. The `saemix` parameter transform is used only as a reversible
 internal coordinate map; the natural density and its exact Jacobian define the
 same likelihood under identity or log storage.
 
-Ten untouched data-generating seeds contain 180 subjects with eight IV
+Two hundred untouched data-generating seeds contain 180 subjects with eight IV
 one-compartment observations each. Every dataset follows the realistic
 screen-and-refit workflow:
 
@@ -33,21 +33,26 @@ $A_k\approx I(\theta_k)^{-1}$. Eigenvalues are bounded away from zero and
 infinity. The metric and MCMC proposal tuning stop adapting before the
 decreasing-gain phase; population parameters remain free throughout.
 
-## Ten-dataset results
+If the initial ranking is unresolved, screening is repeated with 2,000 posterior
+draws. If it remains unresolved, the standard family is retained.
 
-- The free-margin fit had higher observed log likelihood in 10/10 datasets;
-  every gain exceeded twice the combined likelihood Monte Carlo error.
-- Median likelihood gain was 7.16 (2.5th--97.5th percentiles 1.65--10.45).
-- Clearance selection chose Gamma in 7 datasets and Weibull in 3; all selected
-  volume margins remained lognormal.
+## Two-hundred-dataset results
+
+- The free-margin procedure had higher observed log likelihood in 163/200
+  datasets; 148 gains exceeded twice the combined likelihood Monte Carlo error.
+  Twenty-seven unresolved datasets conservatively retained the standard fit.
+- Median likelihood gain was 4.69 (2.5th--97.5th percentiles -0.56--13.00).
+- Clearance selection chose Gamma in 149 datasets, Weibull in 17 and lognormal
+  in 34 (including the 27 retained-standard cases). Volume remained lognormal.
 - The generating probability `P(CL > 8)` is 0.100. Median fitted probability
-  was 0.111 for the free model and 0.119 for lognormal clearance.
-- The free fit had lower overall and extreme VPC log-RMSE in all 10 datasets.
+  was 0.106 for the free model and 0.108 for lognormal clearance.
+- The free procedure had lower overall and extreme VPC log-RMSE in 172/200
+  datasets; nearly all ties were conservative standard retention.
 - Median VPC log-RMSE across the 1st, 10th, 50th, 90th and 99th percentiles was
-  0.219 for free margins and 0.811 for lognormal clearance.
-- Median extreme-quantile VPC log-RMSE was 0.266 versus 1.266.
-- Median final-fit runtime ratio was 2.02 (48.6 seconds for the selected-family
-  fit); median screening time was 59.5 seconds.
+  0.219 for free margins and 0.689 for lognormal clearance.
+- Median extreme-quantile VPC log-RMSE was 0.293 versus 1.078.
+- Median final-fit runtime ratio was 2.05; median screening time was 95.7
+  seconds.
 
 ## Verification
 
@@ -58,10 +63,10 @@ decreasing-gain phase; population parameters remain free throughout.
   observed-likelihood scorer pass an end-to-end PK test.
 - The analytic score agrees with the global numerical score to the stated
   regression tolerance.
-- All 20 final validation fits passed post-learning projection, backtracking,
+- All completed validation fits passed post-learning projection, backtracking,
   no-move and metric-freeze checks.
 
 The earlier exponentiated centred-Gamma experiment is not used as evidence.
 
-Run `run_replicates.R 10 5 --force` to regenerate the fits and
-`summarize_replicates.R` to regenerate the summaries and figure.
+Run `run_replicates.R 200 10 --force` to regenerate the fits and
+`summarize_replicates.R 200` to regenerate the summaries and figure.

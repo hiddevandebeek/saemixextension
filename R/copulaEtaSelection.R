@@ -317,7 +317,7 @@ copulaPopulationFromEtaSelection <- function(state, margins) {
       variableName = state$conditioningName) else NULL
   copulaPopulation(state$vine, margins = margins,
     scale = "transformed-additive", conditioning = conditioning,
-    scoreScale = state$scoreScale %||% .05,
+    scoreScale = state$scoreScale %||% 1,
     scoreFiniteDifference = state$scoreFiniteDifference %||% 1e-4,
     scoreProjection = state$scoreProjection %||% 24,
     scoreGainScale = state$scoreGainScale %||% .2,

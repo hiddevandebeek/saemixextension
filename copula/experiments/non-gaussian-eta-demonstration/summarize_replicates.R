@@ -4,17 +4,29 @@ suppressPackageStartupMessages({
 })
 
 root <- "C:/package/saemix-copula/copula/experiments/non-gaussian-eta-demonstration"
+args <- commandArgs(trailingOnly = TRUE)
+expected <- if (length(args)) as.integer(args[1L]) else NA_integer_
 files <- sort(list.files(file.path(root, "replicates"),
   pattern = "^replicate_[0-9]{3}[.]rds$", full.names = TRUE))
-if (length(files) != 10L) stop("expected exactly 10 replicate results")
+if (!length(files) || (!is.na(expected) && length(files) != expected))
+  stop("replicate result count does not match the requested study size")
 results <- lapply(files, readRDS)
 stopifnot(all(vapply(results, `[[`, integer(1), "schema") == 1L),
   !anyDuplicated(vapply(results, `[[`, integer(1), "replicate")),
   !anyDuplicated(vapply(results, `[[`, integer(1), "data_seed")))
+nFits <- length(results)
 
-bind <- function(field) do.call(rbind, lapply(results, function(result) {
-  value <- result[[field]]; value$replicate <- result$replicate; value
-}))
+bind <- function(field) {
+  values <- lapply(results, function(result) {
+    value <- result[[field]]; value$replicate <- result$replicate; value
+  })
+  columns <- unique(unlist(lapply(values, names)))
+  values <- lapply(values, function(value) {
+    for (name in setdiff(columns, names(value))) value[[name]] <- NA
+    value[, columns, drop = FALSE]
+  })
+  do.call(rbind, values)
+}
 estimates <- bind("summary"); density <- bind("density")
 tail <- bind("tail"); vpc <- bind("vpc")
 renameArm <- function(value) {
@@ -69,6 +81,9 @@ metricSummary <- do.call(rbind, lapply(split(vpcMetrics, vpcMetrics$arm),
     extreme_median = median(x$extreme_quantile_log_rmse),
     extreme_lower = quantile(x$extreme_quantile_log_rmse, .025),
     extreme_upper = quantile(x$extreme_quantile_log_rmse, .975))))
+pairedMetrics <- merge(subset(vpcMetrics, arm == "Lognormal fit"),
+  subset(vpcMetrics, arm == "Free-margin fit"), by = "replicate",
+  suffixes = c("_standard", "_free"))
 pairedSummary <- data.frame(n = nrow(paired),
   flexible_likelihood_better = sum(paired$likelihood_gain > 0),
   likelihood_gain_median = median(paired$likelihood_gain),
@@ -76,12 +91,24 @@ pairedSummary <- data.frame(n = nrow(paired),
   likelihood_gain_upper = quantile(paired$likelihood_gain, .975),
   likelihood_gain_over_2mcse = sum(paired$likelihood_gain >
     2 * paired$likelihood_difference_mcse),
+  retained_standard_count = sum(as.logical(paired$retained_standard_flexible),
+    na.rm = TRUE),
   gamma_selected_count = sum(grepl("/gamma$", paired$selected_families_flexible)),
+  weibull_selected_count = sum(grepl("/weibull$",
+    paired$selected_families_flexible)),
+  lognormal_selected_count = sum(grepl("/lognormal$",
+    paired$selected_families_flexible)),
+  all_vpc_better_count = sum(pairedMetrics$all_quantile_log_rmse_free <
+    pairedMetrics$all_quantile_log_rmse_standard),
+  extreme_vpc_better_count = sum(
+    pairedMetrics$extreme_quantile_log_rmse_free <
+      pairedMetrics$extreme_quantile_log_rmse_standard),
   gamma_shape_median = median(paired$shape_flexible, na.rm = TRUE),
   gamma_sd_median = median(paired$sd_flexible),
   gaussian_tail_probability_median = median(paired$tail_probability_gaussian),
   flexible_tail_probability_median = median(paired$tail_probability_flexible),
-  runtime_ratio_median = median(paired$runtime_ratio))
+  runtime_ratio_median = median(paired$runtime_ratio),
+  selection_seconds_median = median(paired$selection_seconds_flexible))
 
 colours <- c("Generating model" = "#222222", "Lognormal fit" = "#2878B5",
   "Free-margin fit" = "#E07A24")
@@ -94,7 +121,8 @@ pDensity <- ggplot(fitDensity, aes(parameter, median, colour = arm, fill = arm))
     colour = colours[["Generating model"]], linewidth = .85) +
   scale_colour_manual(values = colours) + scale_fill_manual(values = colours) +
   labs(title = "A  Recovered individual clearance distribution",
-    subtitle = "Median and 95% range across 10 independently fitted datasets",
+    subtitle = paste("Median and 95% range across", nFits,
+      "independently fitted datasets"),
     x = "Clearance", y = "Density", colour = NULL, fill = NULL) +
   theme_bw(base_size = 10) + theme(legend.position = "bottom",
     panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"))
@@ -109,7 +137,7 @@ pTail <- ggplot(fitTail, aes(cutoff, median, colour = arm, fill = arm)) +
   scale_y_log10() + scale_colour_manual(values = colours) +
   scale_fill_manual(values = colours) +
   labs(title = "B  Upper tail of individual clearance",
-    subtitle = expression(P(CL > x)~"across 10 fitted datasets"),
+    subtitle = bquote(P(CL > x)~"across"~.(nFits)~"fitted datasets"),
     x = expression("Threshold "*x), y = "Exceedance probability (log scale)",
     colour = NULL, fill = NULL) +
   theme_bw(base_size = 10) + theme(legend.position = "bottom",
@@ -148,7 +176,9 @@ pVpc <- ggplot(fitVpc, aes(time, median, group = probability,
 
 output <- file.path(root, "out")
 dir.create(output, recursive = TRUE, showWarnings = FALSE)
-png(file.path(output, "non_gaussian_eta_10_dataset.png"), width = 2600,
+figurePath <- file.path(output, paste0("non_gaussian_eta_", nFits,
+  "_dataset.png"))
+png(figurePath, width = 2600,
   height = 1900, res = 260)
 grid.arrange(pDensity, pTail, pVpc, ncol = 2L,
   layout_matrix = rbind(c(1, 2), c(3, 3)), heights = c(1, 1.2))

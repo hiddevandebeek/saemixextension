@@ -52,13 +52,24 @@ ng_fit_pair <- function(simulation, seedBase) {
   gaussianTime <- system.time(gaussian <- saemix(
     ng_model(), ng_data(simulation$data), ng_control(seedBase + 11L),
     population = gaussianPopulation))["elapsed"]
-  selectionTime <- system.time(selection <- copulaSelectParameterMargins(
+  selectMargins <- function(draws, maxIter, seed) suppressWarnings(
+    copulaSelectParameterMargins(
     gaussian, supports = c("positive", "positive"),
     candidates = list("lognormal", c("lognormal", "gamma", "weibull")),
-    posteriorDraws = 700L, max.iter = 450L, seed = seedBase + 21L,
+    posteriorDraws = draws, max.iter = maxIter, seed = seed,
     optimizerMaxit = 200L, minimumEssFraction = .005,
-    minimumPosteriorEssFraction = .01, maximumMcse = 1))["elapsed"]
-  flexiblePopulation <- selection$population
+    minimumPosteriorEssFraction = .01, maximumMcse = 1))
+  selectionTime <- system.time(selection <- selectMargins(
+    700L, 450L, seedBase + 21L))["elapsed"]
+  if (!isTRUE(selection$diagnostics$selectionResolved)) {
+    retryTime <- system.time(selection <- selectMargins(
+      2000L, 700L, seedBase + 22L))["elapsed"]
+    selectionTime <- selectionTime + retryTime
+  }
+  retainStandard <- !isTRUE(selection$diagnostics$selectionResolved)
+  selection$retainedStandard <- retainStandard
+  selectedFamilies <- if (retainStandard) c("lognormal", "lognormal") else
+    selection$families
   startFixed <- as.numeric(gaussian@results@fixed.effects)[1:2]
   names(startFixed) <- c("V", "CL")
   startResidual <- ng_residual(gaussian)
@@ -66,16 +77,23 @@ ng_fit_pair <- function(simulation, seedBase) {
   if (any(!is.finite(startOmega)) ||
       inherits(try(chol(startOmega), silent = TRUE), "try-error"))
     startOmega <- diag(c(.25^2, .40^2))
-  flexibleTime <- system.time(flexible <- saemix(
-    ng_model(startFixed, startResidual, startOmega),
-    ng_data(simulation$data), ng_control(seedBase + 31L),
-    population = flexiblePopulation))["elapsed"]
-  gaussian@options$nmc.is <- 2500L; flexible@options$nmc.is <- 2500L
+  if (!retainStandard) {
+    flexiblePopulation <- selection$population
+    flexibleTime <- system.time(flexible <- saemix(
+      ng_model(startFixed, startResidual, startOmega),
+      ng_data(simulation$data), ng_control(seedBase + 31L),
+      population = flexiblePopulation))["elapsed"]
+  } else { flexible <- gaussian; flexibleTime <- 0 }
+  gaussian@options$nmc.is <- 2500L
   gaussian <- suppressWarnings(llisCopula.saemix(gaussian,
     defensive = .20, batch = 100L, seed = seedBase + 41L))
-  flexible <- suppressWarnings(llisCopula.saemix(flexible,
-    defensive = .20, batch = 100L, seed = seedBase + 42L))
+  if (retainStandard) flexible <- gaussian else {
+    flexible@options$nmc.is <- 2500L
+    flexible <- suppressWarnings(llisCopula.saemix(flexible,
+      defensive = .20, batch = 100L, seed = seedBase + 42L))
+  }
   list(gaussian = gaussian, flexible = flexible, selection = selection,
+    selectedFamilies = selectedFamilies,
     elapsed = c(gaussian = unname(gaussianTime),
       selection = unname(selectionTime), flexible = unname(flexibleTime)))
 }
@@ -122,9 +140,9 @@ ng_run_replicate <- function(replicate, resultRoot, force = FALSE,
   simulation <- ng_simulate(seedBase + 1L)
   fits <- ng_fit_pair(simulation, seedBase)
   states <- lapply(fits[c("gaussian", "flexible")], copulaGet)
-  stopifnot(identical(states$flexible$lastJoint$scoreMethod,
-      "hybrid-fixed-reference-path-score"),
-    isTRUE(fits$selection$diagnostics$selectionResolved),
+  stopifnot((isTRUE(fits$selection$retainedStandard) ||
+      identical(states$flexible$lastJoint$scoreMethod,
+        "hybrid-fixed-reference-path-score")),
     isTRUE(states$gaussian$lastJoint$scoreTheory$runtimeConditionsObserved),
     isTRUE(states$flexible$lastJoint$scoreTheory$runtimeConditionsObserved))
 
@@ -186,7 +204,7 @@ ng_run_replicate <- function(replicate, resultRoot, force = FALSE,
       likelihood_mcse = attr(fits$gaussian,
         "saemix.copula.likelihood")$se_loglik_total,
       runtime_seconds = fits$elapsed[["gaussian"]]),
-    data.frame(arm = "Free-margin fit", family = fits$selection$families[2L],
+    data.frame(arm = "Free-margin fit", family = fits$selectedFamilies[2L],
       shape = if ("shape" %in% names(states$flexible$margins[[2L]]$parameters))
         states$flexible$margins[[2L]]$parameters[["shape"]] else NA_real_,
       sd = stats::sd(flexiblePsi[, 2L]),
@@ -199,7 +217,9 @@ ng_run_replicate <- function(replicate, resultRoot, force = FALSE,
       runtime_seconds = fits$elapsed[["flexible"]]))
   summary$selection_seconds <- c(0, fits$elapsed[["selection"]])
   summary$selected_families <- c("lognormal/lognormal",
-    paste(fits$selection$families, collapse = "/"))
+    paste(fits$selectedFamilies, collapse = "/"))
+  summary$retained_standard <- c(FALSE,
+    isTRUE(fits$selection$retainedStandard))
   summary$replicate <- replicate
   result <- list(schema = 1L, replicate = replicate,
     data_seed = seedBase + 1L, summary = summary, density = density,
