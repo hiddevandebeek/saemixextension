@@ -76,6 +76,35 @@ write.csv(populationMetric, file.path(output, "population_vpc_metrics.csv"), row
 write.csv(conditionalMetric, file.path(output, "conditional_vpc_metrics.csv"), row.names = FALSE)
 write.csv(relationshipMetric, file.path(output, "relationship_metrics.csv"), row.names = FALSE)
 write.csv(quality, file.path(output, "quality_summary.csv"), row.names = FALSE)
+metricSummary <- bind_rows(
+  populationMetric |> group_by(arm) |> summarise(endpoint = "population VPC",
+    median_log_rmse = median(log_rmse), lower = quantile(log_rmse, .025),
+    upper = quantile(log_rmse, .975), .groups = "drop"),
+  conditionalMetric |> group_by(arm) |> summarise(endpoint = "conditional VPC",
+    median_log_rmse = median(log_rmse), lower = quantile(log_rmse, .025),
+    upper = quantile(log_rmse, .975), .groups = "drop"),
+  relationshipMetric |> group_by(arm) |> summarise(endpoint = "conditional CL relationship",
+    median_log_rmse = median(log_rmse), lower = quantile(log_rmse, .025),
+    upper = quantile(log_rmse, .975), .groups = "drop"))
+familySummary <- summary |> filter(arm == "Flexible FREM") |>
+  count(familyCL, familyCRP, retainedStandard, name = "datasets")
+estimateSummary <- summary |> group_by(arm) |>
+  summarise(across(c(V, CL, residual), list(mean = mean, median = median,
+    lower = ~quantile(.x, .025), upper = ~quantile(.x, .975))), .groups = "drop")
+gainSummary <- data.frame(endpoint = c("joint likelihood", "conditional response likelihood"),
+  median = c(median(wideSummary$`total_Flexible FREM` - wideSummary$`total_Gaussian FREM`),
+    median(wideSummary$`conditional_response_Flexible FREM` -
+      wideSummary$`conditional_response_Gaussian FREM`)),
+  lower = c(quantile(wideSummary$`total_Flexible FREM` - wideSummary$`total_Gaussian FREM`, .025),
+    quantile(wideSummary$`conditional_response_Flexible FREM` -
+      wideSummary$`conditional_response_Gaussian FREM`, .025)),
+  upper = c(quantile(wideSummary$`total_Flexible FREM` - wideSummary$`total_Gaussian FREM`, .975),
+    quantile(wideSummary$`conditional_response_Flexible FREM` -
+      wideSummary$`conditional_response_Gaussian FREM`, .975)))
+write.csv(metricSummary, file.path(output, "metric_summary.csv"), row.names = FALSE)
+write.csv(familySummary, file.path(output, "family_summary.csv"), row.names = FALSE)
+write.csv(estimateSummary, file.path(output, "estimate_summary.csv"), row.names = FALSE)
+write.csv(gainSummary, file.path(output, "likelihood_gain_summary.csv"), row.names = FALSE)
 
 truthColour <- "#202020"; flexibleColour <- "#E76F00"; gaussianColour <- "#2878B5"
 fittedColours <- c("Flexible FREM" = flexibleColour, "Gaussian FREM" = gaussianColour)

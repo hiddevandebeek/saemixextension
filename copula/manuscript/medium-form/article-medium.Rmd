@@ -15,14 +15,13 @@ abstract: |
   marginal, dependence and residual parameters are estimated jointly by
   controlled-Markov likelihood-score stochastic approximation with a finitely
   learned empirical-information preconditioner. In 400 fixed-family nonlinear
-  mixed-effects datasets, structural bias remained within 0.47%. In a separate
-  200-dataset automatic study generated with Gamma clearance, free selection
-  chose Gamma 149 times, Weibull 17 times and lognormal 34 times, including 27
-  conservative standard retentions. The free procedure improved observed log
-  likelihood in 163 datasets and reduced extreme-VPC log-RMSE in 172; median
-  extreme error was 0.293 versus 1.078 for standard lognormal clearance. In 200
-  conditional-prediction datasets, flexible covariate margins reduced median
-  VPC log-RMSE from 0.336 to 0.085. Thus natural-scale marginal assumptions can
+  mixed-effects datasets, structural bias remained within 0.47%. In 500 joint
+  datasets generated with Gamma clearance and Gamma CRP, the flexible workflow
+  selected Gamma clearance 430 times and conservatively retained lognormal in
+  37. It improved total and conditional-response likelihood in all 500 datasets,
+  population VPC error in 459 and upper-CRP conditional VPC error in 496. Median
+  conditional VPC log-RMSE was 0.277 versus 1.891 for Gaussian FREM. Thus
+  natural-scale marginal assumptions can
   be learned separately from fixed-model likelihood estimation and materially
   affect population and conditional tail prediction.
 output:
@@ -547,35 +546,31 @@ reevaluated with independent 5,000-draw importance samples. The complete
 parameters, dependence matrix, seeds and stabilization criteria are recorded in
 the reproducibility bundle.
 
-### Automatic natural-parameter margin selection
+### Joint natural-parameter and covariate-margin study
 
-Two hundred independent one-compartment datasets contained $N=180$ subjects
-with eight observations each. Volume was lognormal; clearance was generated
-directly as Gamma with shape 2.5 and geometric mean 3.5. The latent Gaussian
-score correlation was 0.35 and proportional residual SD was 0.12. Each dataset
-first received a standard 1,500-iteration lognormal fit. Volume remained
-standard, while positive clearance candidates (lognormal, Gamma and Weibull)
-were fitted from 700 posterior draws per subject and ranked on an independent
-700-draw pool. An unresolved ranking was repeated with 2,000 draws; persistent
-uncertainty retained the standard family. A resolved selection received a
-fresh 1,500-iteration fit initialized numerically, but with new SA and MCMC
-state. Independent 2,500-draw importance samples compared observed likelihoods.
-For each fitted population, 100,000 simulated subjects supplied clearance
-density, upper-tail probabilities and response percentiles at the 1st, 10th,
-50th, 90th and 99th levels. Predictive error was log-RMSE against the generating
-quantiles.
+Five hundred independent one-compartment datasets contained $N=250$ subjects
+with eight observations each. Natural volume was lognormal and natural
+clearance was Gamma with shape 2.5 and geometric mean 3.5. CRP was Gamma with
+shape 2 and scale 20. Their latent Gaussian-score correlations were 0.20 for
+volume--clearance, 0.15 for volume--CRP and 0.60 for clearance--CRP; proportional
+residual SD was 0.12. The Gaussian FREM comparator used Normal parameter random
+effects and a Normal CRP margin. For the flexible workflow, the CRP family was
+screened from its observed values, a fixed flexible-covariate incumbent supplied
+full individual posterior draws, and positive clearance candidates (lognormal,
+Gamma and Weibull) were fitted on 700 draws per subject and ranked on an
+independent 700-draw pool. An unresolved ranking was repeated with 2,000 draws;
+persistent uncertainty retained lognormal clearance. Every fitted model used
+1,500 score iterations, and a resolved selection was fitted afresh with new SA
+and MCMC state. Independent 2,500-draw importance samples evaluated the joint
+observed likelihood and its covariate and conditional-response components.
 
-### Conditional prediction
-
-Two hundred independently generated $N=300$ datasets used Gamma CRP, Normal albumin
-and CRP--clearance score correlation 0.55. A stock Gaussian NLME fit supplied
-only finite initial values; Gaussian and flexible-margin FREM were then fitted
-afresh for 1,500 score iterations. Conditional-median clearance was evaluated
-on a fixed CRP grid, with pointwise 2.5th--97.5th percentiles across fitted
-datasets. For each fit, a common-random-number population of 30,000 subjects
-above the 95th CRP percentile supplied the 10th, 50th and 90th response
-percentiles at seven times; albumin was integrated out. Predictive error was
-log-RMSE against generating quantiles.
+For each fitted population, 50,000 common-random-number subjects supplied the
+natural clearance density and population response percentiles at the 1st, 10th,
+50th, 90th and 99th levels. Conditional-median clearance was evaluated over the
+1st--99.9th percentiles of the generating CRP distribution. A second population
+of 50,000 subjects sampled above the 95th CRP percentile supplied conditional
+10th, 50th and 90th response percentiles. Population and conditional predictive
+errors were log-RMSE against generating quantiles.
 
 ### Numerical verification
 
@@ -624,57 +619,31 @@ models are non-nested and the independent importance-sampling comparisons are
 descriptive; by (8a), joint improvement alone does not establish improved
 $p(Y\mid c)$.
 
-## Automatic natural-parameter margin selection
+## Joint natural-parameter and covariate-margin study
 
-The free procedure selected Gamma clearance in 149 datasets, Weibull in 17 and
-lognormal in 34; the last group included 27 conservative standard retentions
-after unresolved screening. Observed log likelihood was higher in 163/200
-paired datasets and exceeded twice the combined Monte Carlo error in 148.
-Median gain was 4.69 (2.5th--97.5th percentiles -0.56--13.00). Median fitted
-Gamma shape was 2.46 among Gamma selections (generating value 2.5).
+The flexible workflow selected Gamma clearance in 430 datasets, Weibull in 33
+and lognormal in 37 conservative retentions. CRP was selected as Gamma in 389,
+Weibull in 103 and lognormal in 8. Total and conditional-response likelihoods
+were higher in all 500 paired datasets and exceeded twice combined Monte Carlo
+error in all 500. Median gains were 63.23 and 17.33, respectively.
 
-The free procedure had lower overall and extreme VPC log-RMSE in 172/200
-datasets. Median overall error was 0.219 versus 0.689 for standard lognormal
-clearance; median 1st/99th-percentile error was 0.293 versus 1.078. The median
-fitted probability $P(CL>8)$ was 0.106 for free margins, 0.108 for lognormal
-clearance and 0.100 under generation (Figure 1). Median screening time was 95.7
-seconds and the selected-family refit took 2.05 times the standard-fit runtime.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.98\linewidth]{figures/figure2_natural_margin_200.png}
-\caption{Natural-parameter marginal validation across 200 independent datasets.
-(A) Generating Gamma clearance density (black) and median fitted densities with
-pointwise 95\% ranges. (B) Corresponding upper-tail probabilities. (C) Replicated
-population VPC for automatically selected free margins and standard lognormal
-clearance. Black symbols denote generating 1st (triangle), 50th (circle) and
-99th (square) percentiles; coloured dashed lines and ribbons are fitted medians
-and pointwise 95\% ranges.}
-\end{figure}
-
-## Conditional prediction
-
-Mean $V$, $CL$ and residual estimates were nearly identical between arms
-(10.021, 3.014 and 0.120). At the 99.9th CRP percentile, generating median
-clearance was 5.44. Across fits, the flexible median was 5.28 with a pointwise
-95% interval of 4.75--5.90, whereas Gaussian FREM gave 7.60 (6.41--9.36;
-Figure 2A).
-
-Flexible margins had lower conditional VPC log-RMSE in 174/200 paired fits.
-Median RMSE was 0.085 versus 0.336 for Gaussian FREM; the mean paired difference
-was 0.246 (95% CI 0.219--0.272), and the median relative reduction was 74.4%
-(Figure 2B).
+Median population VPC log-RMSE was 0.202 for flexible versus 0.853 for Gaussian
+FREM, with the flexible fit better in 459/500 datasets. Median upper-CRP
+conditional VPC error was 0.277 versus 1.891, with improvement in 496/500; the
+conditional clearance relationship improved in 499/500 (median log-RMSE 0.050
+versus 0.167; Figure 1). Mean flexible estimates were 20.05 for $V$, 3.54 for
+$CL$ and 0.122 for residual SD (generating values 20, 3.5 and 0.12).
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.98\linewidth]{figures/figure1_replicated_conditional.png}
-\caption{Conditional results across 200 independently fitted datasets. (A)
-Median FFEM/conditional relationships; ribbons are pointwise 2.5th--97.5th
-percentiles across fits and the black line is the generating relationship. (B)
-Replicated conditional VPC. Grey regions and black symbols show the generating
-10th (triangle), 50th (circle) and 90th (square) percentiles. Coloured dashed
-lines are median fitted quantiles across the 200 fits; coloured ribbons are
-pointwise 2.5th--97.5th percentiles for the fitted median.}
+\includegraphics[width=0.98\linewidth]{figures/figure1_combined_frem_500.png}
+\caption{Joint natural-parameter and covariate-margin validation across 500
+independent datasets. Black lines and symbols denote the generating model;
+coloured lines are fitted medians and ribbons are pointwise 95\% ranges. (A)
+Natural clearance density. (B) Conditional median clearance across CRP
+percentiles. (C) Population VPC at the 1st, 50th and 99th percentiles. (D)
+Conditional VPC above the 95th CRP percentile at the 10th, 50th and 90th
+percentiles.}
 \end{figure}
 
 ## Numerical verification
@@ -695,16 +664,15 @@ parameter from the coordinate map used by the nonlinear mixed-effects software.
 A standard Normal or lognormal model supplies full posterior draws; registered
 support-compatible families are ranked outside the recursion, and a resolved
 selection is fitted afresh. Each fit therefore retains one likelihood and one
-state space. In the 200-dataset automatic study, this workflow usually selected
-Gamma clearance, recovered its shape, and improved both the observed likelihood
-and population-tail VPCs. Unresolved comparisons conservatively retained the
-standard model.
+state space. In the 500-dataset joint study, this workflow usually selected
+Gamma clearance and a non-Gaussian CRP margin, while unresolved comparisons
+conservatively retained lognormal clearance.
 
 The clearest practical difference was prediction conditional on covariate-tail
 values. A misspecified marginal CDF changes the Gaussian score assigned to a
 covariate value and therefore changes the fitted distribution
 $p(\psi\mid c)$ even when the first two moments are estimated
-accurately. Across 200 fits, flexible margins substantially reduced conditional
+accurately. Across 500 fits, flexible margins substantially reduced conditional
 VPC-quantile error and contained the generating upper-tail relationship within
 their between-fit band.
 
@@ -723,10 +691,9 @@ the incumbent, and heavy-tailed candidates may require more draws, defensive
 proposals or direct refitted-likelihood comparison despite an apparently
 adequate finite ESS.
 
-The evaluation used one PK model, and automatic natural-parameter selection and
-flexible covariate margins were evaluated in separate nonlinear experiments.
-Their combined use, broader structural models and formal coverage studies remain
-to be evaluated. General non-Gaussian R-vines, nonregular support-boundary MLEs,
+The evaluation used one PK model. Broader structural models and formal coverage
+studies remain to be evaluated. General non-Gaussian R-vines, nonregular
+support-boundary MLEs,
 permutation-invariant nominal models and fixed-only estimated structural
 parameters are outside scope. Supported margins must be proper, identifiable
 and satisfy the stated differentiability and moment conditions; this is not a
