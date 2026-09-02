@@ -41,21 +41,53 @@ copulaNaturalPosteriorData <- function(object, draws) {
     conditioning = conditioning)
 }
 
-copulaNaturalBridgeMetric <- function(margins, data, incumbent) {
+copulaNaturalBridgePrepare <- function(data, incumbent) {
   hasConditioning <- (incumbent$dConditioning %||% 0L) > 0L
-  candidateMargins <- if (hasConditioning)
-    c(margins, incumbent$margins[incumbent$dEta +
-      seq_len(incumbent$dConditioning)]) else margins
-  candidate <- if (hasConditioning)
-    copulaNaturalFremLogPrior(data$eta, data$conditioning, incumbent$vine,
-      candidateMargins, incumbent$dEta, data$predictor, data$transform,
-      "joint") else
-    -copulaNaturalWorkingPriorKernel(incumbent$vine, margins,
-      data$predictor, data$transform)$negative(data$eta)
   baselineState <- if (hasConditioning)
     cbind(data$eta, data$conditioning) else data$eta
   baseline <- copulaGaussianFremLogPrior(baselineState, incumbent$vine,
     incumbent$margins, incumbent$dEta, "joint")
+  R <- copulaGaussianRvineCor(incumbent$vine, incumbent$d)
+  U <- chol(R)
+  covariate <- if (hasConditioning) copulaGaussianFremEvaluateMargins(
+    data$conditioning, incumbent$margins[incumbent$dEta +
+      seq_len(incumbent$dConditioning)]) else list(
+        z = matrix(numeric(), nrow(data$eta), 0L),
+        logMargin = matrix(numeric(), nrow(data$eta), 0L),
+        valid = rep(TRUE, nrow(data$eta)))
+  if (any(!is.finite(baseline)) || !all(covariate$valid))
+    stop("incumbent posterior pool has an invalid population density")
+  data$bridgeCache <- list(baseline = baseline, covariate = covariate,
+    U = U, logDet = 2 * sum(log(diag(U))),
+    copulaQuadratic = solve(R) - diag(incumbent$d),
+    logJacobian = rowSums(copulaWorkingLogJacobian(
+      data$predictor + data$eta, data$transform)))
+  data
+}
+
+copulaNaturalBridgeCandidateLogPrior <- function(margins, data, incumbent) {
+  cache <- data$bridgeCache
+  if (is.null(cache)) data <- copulaNaturalBridgePrepare(data, incumbent)
+  cache <- data$bridgeCache
+  evaluated <- copulaNaturalMarginsEvaluate(data$natural, data$typical, margins)
+  valid <- evaluated$valid & cache$covariate$valid
+  answer <- rep(-Inf, nrow(data$eta)); rows <- which(valid)
+  if (!length(rows)) return(answer)
+  z <- cbind(evaluated$z, cache$covariate$z)
+  zr <- z[rows, , drop = FALSE]
+  logCopula <- -.5 * cache$logDet - .5 * rowSums(
+    (zr %*% cache$copulaQuadratic) * zr)
+  answer[rows] <- logCopula +
+    rowSums(evaluated$logMargin[rows, , drop = FALSE]) +
+    rowSums(cache$covariate$logMargin[rows, , drop = FALSE]) +
+    cache$logJacobian[rows]
+  answer
+}
+
+copulaNaturalBridgeMetric <- function(margins, data, incumbent) {
+  if (is.null(data$bridgeCache)) data <- copulaNaturalBridgePrepare(data, incumbent)
+  candidate <- copulaNaturalBridgeCandidateLogPrior(margins, data, incumbent)
+  baseline <- data$bridgeCache$baseline
   copulaPosteriorBridgeMetricFromLogWeight(matrix(candidate - baseline,
     nrow = data$n, ncol = data$samples))
 }
@@ -120,6 +152,8 @@ copulaSelectParameterMargins <- function(object, supports, candidates = NULL,
     as.integer(seed) + 1L)
   training <- copulaNaturalPosteriorData(object, trainingDraws)
   validation <- copulaNaturalPosteriorData(object, validationDraws)
+  training <- copulaNaturalBridgePrepare(training, state)
+  validation <- copulaNaturalBridgePrepare(validation, state)
   fitted <- lapply(seq_len(nrow(grid)), function(row)
     copulaFitNaturalCandidate(as.character(grid[row, ]), supports, training,
       validation, state, optimizerMaxit))

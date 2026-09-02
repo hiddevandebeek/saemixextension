@@ -479,6 +479,12 @@ have infinite variance; empirical ESS detects concentration but cannot prove a
 finite second moment. Unresolved screens require more draws, fewer candidates
 or direct comparison of refitted leaders.
 
+Incumbent log densities, observed-covariate transforms, the Gaussian copula
+quadratic form and coordinate-map Jacobians are invariant across candidate
+optimizer evaluations and are cached once per posterior pool. Candidate
+evaluation recomputes only its natural marginal densities and Gaussian scores;
+this is an algebraic reorganization of (14), not an approximation.
+
 The selected family names are held fixed for a fresh score fit that re-estimates
 all continuous population, dependence and residual-error parameters. Thus (13)
 applies to that fixed-model fit, not to selection itself. Appendix A proves
