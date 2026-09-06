@@ -305,15 +305,22 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
   ## negligible until its last fifth -- measured, the difference between 53 and
   ## 96 per cent coverage, and between 1.05 and 0.27 standard deviations of
   ## bias.
+  ## A re-initialisation (see copulaScoreSa.R) restarts the schedule: the
+  ## iteration count and the run length are taken relative to the start of
+  ## the current epoch, exactly as the step-size index is reset in Algorithm 2
+  ## of Fort et al. (2016). The terminal pass keeps its absolute position.
+  epoch <- .cop$scoreEpochStart %||% 0L
+  kEff <- kiter - epoch
+  totalEff <- if (is.finite(total)) total - epoch else total
   preheat <- max(1L, as.integer(.cop$scorePreheat %||%
-    (if (is.finite(total)) min(2000L, max(50L, as.integer(total %/% 5L)))
+    (if (is.finite(totalEff)) min(2000L, max(50L, as.integer(totalEff %/% 5L)))
      else 1000L)))
   start <- .cop$scoreGainStart %||% 1e-4
   alpha <- .cop$scoreGainPower %||% 0.8
   heatEnd <- .cop$scoreHeatEnd %||% NA_integer_
-  gain <- if (kiter <= preheat) start^(1 - kiter / preheat) else
+  gain <- if (kEff <= preheat) start^(1 - kEff / preheat) else
     if (!is.finite(heatEnd)) 1 else (kiter - heatEnd)^(-alpha)
-  preheating <- kiter <= preheat
+  preheating <- kEff <= preheat
   ## Terminal averaging pass. The parameter step is frozen and the per-subject
   ## mean scores are averaged with gain 1/k from the start of the pass, so the
   ## information reported at the end is the outer product of scores averaged
@@ -413,7 +420,20 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
   ## Heating is also ended, at the latest, when the averaging floor below
   ## begins, so that the Polyak average is always taken over decreasing-gain
   ## iterates rather than over a constant-gain random walk.
-  if (kiter > preheat && !is.finite(.cop$scoreHeatEnd %||% NA_integer_)) {
+  restarted <- FALSE
+  if (isTRUE(answer$state$restartRequested)) {
+    answer$state$restartRequested <- FALSE
+    restarted <- TRUE
+    .cop$scoreEpochStart <- as.integer(kiter)
+    .cop$scoreRestarts <- (.cop$scoreRestarts %||% 0L) + 1L
+    .cop$chainResetRequested <- TRUE
+    .cop$scoreHeatEnd <- NA_integer_; .cop$scoreFilter <- NULL
+    .cop$scoreSmoothing <- FALSE; .cop$scoreSmoothingStart <- NULL
+    .cop$scoreSmoothingSource <- NULL
+    .cop$scoreStepMean <- NULL; .cop$scoreGradMean <- NULL
+  }
+  if (!restarted && kEff > preheat &&
+      !is.finite(.cop$scoreHeatEnd %||% NA_integer_)) {
     step <- as.numeric(answer$preconditionedStep)
     tc <- .cop$scoreFilterTime %||% 100
     heatMin <- as.integer(ceiling(3 * tc))
@@ -425,14 +445,15 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
     st$m2 <- st$m2 + f * (st$m1 / st$mone - st$m2)
     st$m3 <- st$m3 + f * (st$m2 / st$mone - st$m3)
     unbiased <- st$m3 / st$mone
-    if (!is.null(st$previous) && kiter - preheat > heatMin &&
+    if (!is.null(st$previous) && kEff - preheat > heatMin &&
         sum(unbiased^2) > sum(st$previous^2))
       .cop$scoreHeatEnd <- as.integer(kiter)
     st$previous <- unbiased
     .cop$scoreFilter <- st
   }
-  if (!is.finite(.cop$scoreHeatEnd %||% NA_integer_) && is.finite(total) &&
-      total > 0 && kiter >= as.integer(ceiling(.6 * total)))
+  if (!restarted && !is.finite(.cop$scoreHeatEnd %||% NA_integer_) &&
+      is.finite(totalEff) && totalEff > 0 &&
+      kEff >= as.integer(ceiling(.6 * totalEff)))
     .cop$scoreHeatEnd <- as.integer(kiter)
   ## Their convergence criterion, which gates when the smoothing phase begins:
   ## `estim()` drops iterations while `end_heating is None` or
@@ -469,8 +490,8 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
   ## it still wins, and if it never fires there is an average instead of a
   ## single draw. It affects the reported information only; the step continues
   ## to use Istar, so the iterates are unchanged.
-  if (!isTRUE(.cop$scoreSmoothing) && is.finite(total) && total > 0 &&
-      kiter >= as.integer(ceiling(.6 * total))) {
+  if (!restarted && !isTRUE(.cop$scoreSmoothing) && is.finite(totalEff) &&
+      totalEff > 0 && kEff >= as.integer(ceiling(.6 * totalEff))) {
     .cop$scoreSmoothing <- TRUE
     .cop$scoreSmoothingStart <- as.integer(kiter)
     .cop$scoreSmoothingSource <- "floor"
@@ -514,7 +535,9 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
     "runtime diagnostics are necessary evidence, not a proof of those ",
     "assumptions.")
 
+  theory$restartCount <- .cop$scoreRestarts %||% 0L
   .cop$lastJoint <- list(kiter = kiter, conv = 0L,
+    restartCount = .cop$scoreRestarts %||% 0L,
     value = answer$value, final = isTRUE(final), backend = answer$backend,
     scoreMax = answer$scoreMax, score = answer$score,
     scoreAverageMax = answer$scoreAverageMax,

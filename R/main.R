@@ -193,6 +193,7 @@ saemix<-function(model,data,control=list(),population=NULL) {
   if(saemix.options$displayProgress) par(ask=FALSE)
   if(saemix.options$warnings) cat("Running main SAEM algorithm\n")
   if(saemix.options$warnings) print(date())
+  phiM.initial<-phiM # x* of Fort et al. (2016) Algorithm 2, see copulaTakeChainReset
   for (kiter in 1:saemix.options$nbiter.tot) { # Iterative portion of algorithm
   .iterationStarted<-proc.time()[["elapsed"]]
   .profileGamma<-if(copulaActive())
@@ -263,6 +264,7 @@ saemix<-function(model,data,control=list(),population=NULL) {
   } else { #end of loop on if(opt$stepsize[kiter]>0)
     allpar[(kiter+1),]<-allpar[kiter,]
   }
+  if(copulaActive() && copulaTakeChainReset()) phiM<-phiM.initial
    if(Dargs$modeltype=="structural") {
   theta<-c(fixed.psi,var.eta[Uargs$i1.omega2],varList$pres[Uargs$ind.res])
     } else{

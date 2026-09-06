@@ -1296,9 +1296,8 @@ copulaGaussianFremPopulationScoreStep <- function(
   ## one inside a compact set. Each hit doubles the half-width of the
   ## coordinates that were clipped; the number of expansions is reported, and
   ## a fit whose post-adaptation projection count is zero never touched the
-  ## boundary at all. (Their construction also reinitialises the iterate on
-  ## each expansion; that step is not taken here, so the guarantee is the
-  ## weaker one stated in the manuscript's supplement.)
+  ## boundary at all. Each hit also re-initialises the iterate (below), which
+  ## is what their theorems require.
   if (is.null(state$projectionCentre) ||
       length(state$projectionCentre) != length(current)) {
     state$projectionCentre <- current
@@ -1317,8 +1316,29 @@ copulaGaussianFremPopulationScoreStep <- function(
   if (projectionEvent && !isTRUE(adaptMetric))
     state$postFreezeProjectionCount <- state$postFreezeProjectionCount + 1L
   if (projectionEvent) {
-    state$projectionWidth[clipped] <- 2 * state$projectionWidth[clipped]
+    ## The truncation sets are the nested boxes K_q = {|theta - theta_0| <=
+    ## 2^q kappa} (all coordinates doubled together), so that they satisfy
+    ## (2.1) of Fort, Moulines, Schreck and Vihola (2016): their union is the
+    ## whole parameter space and each lies in the interior of the next.
+    state$projectionWidth <- 2 * state$projectionWidth
     state$projectionExpansions <- (state$projectionExpansions %||% 0L) + 1L
+    ## Re-initialisation, as in Algorithm 2 of Fort et al. (2016) and the
+    ## truncation scheme of Andrieu, Moulines and Priouret (2005): the iterate
+    ## returns to the starting point, the latent chains return to their
+    ## initial state (main.R), the active set is the enlarged box, the
+    ## per-subject score averages and the Polyak average are discarded, and
+    ## the runtime restarts the gain schedule. Their Theorem 2.1 gives almost
+    ## surely finitely many restarts for a pure power gain sequence and
+    ## convergence to the stationary set within the last epoch; the
+    ## three-phase schedule of Baey et al. is repeated in each epoch, so the
+    ## finiteness of the restarts is reported with the fit rather than
+    ## inherited from the theorem.
+    projected <- state$projectionCentre
+    state$restartRequested <- TRUE
+    state$deltaSubject <- NULL; state$deltaSubjectA <- NULL
+    state$deltaSubjectB <- NULL; state$fisherCount <- 0L
+    state$average <- NULL; state$averageCount <- 0L
+    state$averagingStarted <- FALSE
   }
   ## Projection prevents parameter explosion; an invalid finite-precision PIT
   ## is handled by deterministic step halving, not clipping the density.

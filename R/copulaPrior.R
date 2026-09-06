@@ -352,6 +352,15 @@ copulaTakeResidual <- function() {
   value
 }
 
+## TRUE once after a re-initialisation of the score recursion: main.R then
+## returns the latent chains to their initial state, so that a restart is the
+## (x*, theta*) reset of Algorithm 2 of Fort et al. (2016).
+copulaTakeChainReset <- function() {
+  value <- isTRUE(.cop$chainResetRequested)
+  .cop$chainResetRequested <- FALSE
+  value
+}
+
 copulaAcceptedBeta <- function(current, fitted = NULL, locMap = NULL,
                                betaFree = NULL) {
   current <- as.numeric(current)
@@ -382,6 +391,7 @@ copulaSnapshot <- function(state = copulaGet(), etaIndex = NULL,
     "scoreFiniteDifference", "scoreProjection",
     "scoreGainPower", "scoreBurn", "scorePreheat", "scoreGainStart",
     "scoreHeatEnd", "scoreFilter", "scoreFilterTime", "scoreSmoothing",
+    "scoreEpochStart", "scoreRestarts",
     "scoreStepMean", "scoreGradMean",
     "scoreMetricRidge", "scoreMetricRidgeAbsolute",
     "scoreState", "rwProposalFrozen", "rwProposalFreezeIteration",
