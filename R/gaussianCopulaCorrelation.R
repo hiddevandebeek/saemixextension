@@ -89,10 +89,29 @@ copulaGaussianRvineUpdateCor <- function(vine, correlation) {
   updated
 }
 
+## The decode from vine partial correlations to a correlation matrix runs a
+## Schur recursion with one solve() per conditioned edge, and the innermost
+## likelihood loop calls it repeatedly for an unchanged vine. Memoise the last
+## result on a cheap key: the edge parameters plus the structure order.
+
+.copulaCorCache <- new.env(parent = emptyenv())
+
+copulaGaussianRvineKey <- function(vine, d) {
+  parameters <- unlist(lapply(vine$pair_copulas, function(tree)
+    lapply(tree, function(edge) c(edge$parameters, match(edge$family,
+      c("indep", "gaussian"), nomatch = 0L)))), use.names = FALSE)
+  c(as.numeric(d), as.numeric(vine$structure$order),
+    as.numeric(vine$structure$trunc_lvl), as.numeric(parameters))
+}
+
 copulaGaussianRvineCor <- function(vine,
                                    d = as.integer(vine$structure$d)) {
   if (!inherits(vine, "vinecop_dist") || vine$structure$d != d)
     stop("vine and requested dimensions differ")
+  key <- copulaGaussianRvineKey(vine, d)
+  cached <- .copulaCorCache$entry
+  if (!is.null(cached) && length(cached$key) == length(key) &&
+      all(cached$key == key)) return(cached$correlation)
   if (as.integer(vine$structure$trunc_lvl) != d - 1L)
     stop("an unrestricted Gaussian correlation requires a full R-vine")
   edges <- copulaRVineEdgeSets(vine$structure)
@@ -121,7 +140,9 @@ copulaGaussianRvineCor <- function(vine,
     }
     correlation[a, b] <- correlation[b, a] <- value
   }
-  copulaValidateCorrelation(correlation)
+  correlation <- copulaValidateCorrelation(correlation)
+  .copulaCorCache$entry <- list(key = key, correlation = correlation)
+  correlation
 }
 
 copulaGaussianDvineFromCor <- function(correlation) {

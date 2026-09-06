@@ -10,17 +10,37 @@ copulaPopulation <- function(vine, margins = NULL, sd = NULL,
                              conditioning = NULL,
                              populationAlgorithm = "score-sa",
                              scoreScale = "auto", scoreFiniteDifference = 1e-4,
-                             scoreProjection = 24, scoreGainScale = 0.2,
-                             scoreGainPower = 0.8, scoreGainOffset = 30,
-                             scoreBurn = 50L, ...) {
+                             scoreProjection = 24, scoreGainPower = 0.8,
+                             scoreBurn = 50L, scorePreheat = NULL,
+                             scoreGainStart = 1e-4, scoreMetricRidge = 1e-3,
+                             scoreMetricRidgeAbsolute = 1e-10,
+                             scoreNaturalRoute = c("psi", "reference"),
+                             scoreTerminal = 0L,
+                             ## Accepted and ignored. The diagonal
+                             ## preconditioner these belonged to has been
+                             ## removed; the learning step is now the
+                             ## three-phase schedule, which has no scale or
+                             ## offset, and averaging begins at the smoothing
+                             ## criterion rather than at a fixed fraction.
+                             ## They remain in the signature only so that the
+                             ## experiment and example scripts that pass them
+                             ## keep running.
+                             scoreGainScale = NULL, scoreGainOffset = NULL,
+                             scoreAverageFraction = NULL,
+                             ...) {
   scale <- match.arg(scale)
+  scoreNaturalRoute <- match.arg(scoreNaturalRoute)
   structure(list(arguments = c(list(vine = vine, margins = margins, sd = sd,
     populationScale = scale, conditioning = conditioning,
     populationAlgorithm = populationAlgorithm, scoreScale = scoreScale,
     scoreFiniteDifference = scoreFiniteDifference,
-    scoreProjection = scoreProjection, scoreGainScale = scoreGainScale,
-    scoreGainPower = scoreGainPower, scoreGainOffset = scoreGainOffset,
-    scoreBurn = scoreBurn), list(...))), class = "saemixPopulation")
+    scoreProjection = scoreProjection, scoreGainPower = scoreGainPower,
+    scoreBurn = scoreBurn, scorePreheat = scorePreheat,
+    scoreGainStart = scoreGainStart, scoreMetricRidge = scoreMetricRidge,
+    scoreMetricRidgeAbsolute = scoreMetricRidgeAbsolute,
+    scoreNaturalRoute = scoreNaturalRoute,
+    scoreTerminal = as.integer(scoreTerminal)),
+    list(...))), class = "saemixPopulation")
 }
 
 copulaUsePopulation <- function(population) {
@@ -55,12 +75,25 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
                       warmStartOnActivate = FALSE, guard = FALSE,
                       numericalPolicy = "exact", scoreScale = "auto",
                       scoreFiniteDifference = 1e-4, scoreProjection = 24,
-                      scoreGainScale = 0.2, scoreGainPower = 0.8,
-                      scoreGainOffset = 30, scoreBurn = 50L, ...) {
+                      scoreGainPower = 0.8, scoreBurn = 50L,
+                      scorePreheat = NULL, scoreGainStart = 1e-4,
+                      scoreMetricRidge = 1e-3,
+                      scoreMetricRidgeAbsolute = 1e-10,
+                      scoreNaturalRoute = c("psi", "reference"),
+                      scoreTerminal = 0L,
+                      ## Accepted and ignored; see copulaPopulation.
+                      scoreGainScale = NULL, scoreGainOffset = NULL,
+                      scoreAverageFraction = NULL, ...) {
   previous <- as.list(.cop)
   committed <- FALSE
   on.exit(if (!committed) copulaRestoreState(previous), add = TRUE)
   populationScale <- match.arg(populationScale)
+  ## Which augmentation the parameter-scale score uses; see
+  ## copulaScoreBatchUpdate. "psi" holds the natural parameter fixed and is
+  ## the ordinary complete-data score; "reference" holds a fixed percentile
+  ## and differentiates through the quantile map and the response, which is
+  ## needed only when a margin's support moves with its parameters.
+  scoreNaturalRoute <- match.arg(scoreNaturalRoute)
 
   dots <- list(...)
   if (length(dots))
@@ -152,6 +185,40 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
   vine <- copulaVineForMargins(vine, margins)
   if (!copulaIsFullGaussianVine(vine, d))
     stop("score-sa requires a fixed full Gaussian R-vine")
+  ## The gain is 0.6(k+30)^-0.8, and the exponent is the part that is derived
+  ## rather than chosen.
+  ##
+  ## Robbins-Monro asks only for sum(gamma) infinite and sum(gamma^2) finite,
+  ## and Delyon's Section 8.2 convergence theorem asks no more of the gain than
+  ## that. Both 0.2(k+30)^-0.8 and 2/(k+30) satisfy it -- sums of 2.35 and 7.83
+  ## over 1500 iterations, squared sums of 0.008 and 0.129 -- so the
+  ## convergence result cannot distinguish them, and no amount of testing gain
+  ## constants is answering a question that theorem poses.
+  ##
+  ## What distinguishes them is the rate theory. Polyak and Juditsky's
+  ## averaging result needs gamma_k = c k^-a with a strictly between a half and
+  ## one: the averaged iterate is then asymptotically normal with the optimal
+  ## covariance whatever c and whatever bounded positive definite metric is
+  ## used. At a = 1 that fails -- averaging buys nothing asymptotically, and
+  ## the Fabian CLT instead requires c * lambda_min(A H) > 1/2, a condition on
+  ## curvature nobody knows in advance and which fails silently. So an
+  ## exponent of one is only correct when paired with an exact information
+  ## metric, which is not the default here, and it is flatly inconsistent with
+  ## the tail averaging this code performs.
+  ##
+  ## That is why the exponent returns to 0.8. The constant does not carry the
+  ## same weight: under the averaging result it is asymptotically irrelevant,
+  ## and it governs only how much of the sum is spent before the run stops.
+  ## Measurement agrees, which is what the theorem predicts -- 0.6(k+30)^-0.8,
+  ## 1.0(k+30)^-0.8 and 2/(k+30) all gave a largest bias near 0.2 standard
+  ## deviations and coverage of 93 to 95 per cent, while 0.2(k+30)^-0.8, whose
+  ## sum is 2.35, was biased by 1.04 standard deviations.
+  ##
+  ## The remaining honest gap: choosing c for a finite run is a non-asymptotic
+  ## question, and the bound that settles it is on the initial-condition term,
+  ## which decays like exp(-mu * sum(gamma)). Until that is written down here
+  ## the constant is calibrated rather than derived, and it is labelled as
+  ## such.
   scoreScaleRequested <- scoreScale
   scoreScaleAutomatic <- is.character(scoreScale) &&
     length(scoreScale) == 1L && identical(tolower(scoreScale), "auto")
@@ -163,10 +230,17 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
   if (!numericScalar(scoreScale, TRUE) ||
       !numericScalar(scoreFiniteDifference, TRUE) ||
       !numericScalar(scoreProjection, TRUE) ||
-      !numericScalar(scoreGainScale, TRUE) ||
+      ## The lower bound of 0.75 is theorem-critical for this fork and must
+      ## not be relaxed: with Lipschitz kernel and score exponents and a Fort
+      ## drift moment of at least two, an exponent in (0.75, 1] is what
+      ## satisfies Fort, Moulines, Schreck and Vihola's H6, which is the
+      ## controlled-Markov result the convergence claim rests on. Baey et al.
+      ## use 2/3, which is admissible under their own Theorem 3.7 but outside
+      ## H6; since the exponent is a free choice for them and a requirement
+      ## here, 0.8 is taken, satisfying H6, Polyak and Juditsky's (1/2, 1) and
+      ## Robbins-Monro at once.
       !numericScalar(scoreGainPower, TRUE) || scoreGainPower <= .75 ||
-      scoreGainPower > 1 || !numericScalar(scoreGainOffset) ||
-      scoreGainOffset < 0 || length(scoreBurn) != 1L ||
+      scoreGainPower > 1 || length(scoreBurn) != 1L ||
       is.na(scoreBurn) || scoreBurn < 0)
     stop("invalid score stochastic-approximation controls")
 
@@ -192,14 +266,49 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
       "unit-after-finite-diagonal-score-metric" else "numeric-override",
     scoreFiniteDifference = as.numeric(scoreFiniteDifference),
     scoreProjection = as.numeric(scoreProjection),
-    scoreGainScale = as.numeric(scoreGainScale),
-    scoreGainPower = as.numeric(scoreGainPower),
-    scoreGainOffset = as.numeric(scoreGainOffset), scoreBurn = as.integer(scoreBurn),
+    scoreGainPower = as.numeric(scoreGainPower), scoreBurn = as.integer(scoreBurn),
+    scorePreheat = if (is.null(scorePreheat)) NULL else as.integer(scorePreheat),
+    scoreGainStart = as.numeric(scoreGainStart),
+    scoreMetricRidge = as.numeric(scoreMetricRidge),
+    scoreMetricRidgeAbsolute = as.numeric(scoreMetricRidgeAbsolute),
+    scoreNaturalRoute = scoreNaturalRoute,
+    ## Length of the terminal averaging pass, in iterations at the end of the
+    ## run: the parameter is frozen at its Polyak average and the per-subject
+    ## mean scores are re-averaged from scratch with gain 1/k, which is what
+    ## Delattre and Kuhn's consistency argument needs and the moving recursion
+    ## never delivers. Zero disables it.
+    scoreTerminal = max(0L, as.integer(scoreTerminal)),
     scoreState = NULL, mode = "joint", modelFrozen = TRUE,
     activeFrom = 1L, activated = TRUE, augmentMissingGaussian = TRUE,
     warmStartOnActivate = isTRUE(warmStartOnActivate), guard = isTRUE(guard),
     estimatedMargins = TRUE, estimatedVine = TRUE,
-    locationRankChecked = FALSE, trace = list(), lastJoint = NULL,
+    locationRankChecked = FALSE, subjectChecked = NULL,
+    ## On by default only where it was measured to help. A metric cannot move
+    ## the fixed points, so the choice is purely about how fast the recursion
+    ## gets there, and the answer differs by problem. On a transformed-additive
+    ## fit the coordinates are already comparably scaled, the clipped
+    ## per-coordinate metric is adequate, and the estimated one converges
+    ## slower -- a lower observed log likelihood in 8 replicates of 8. On the
+    ## parameter scale the coordinates are not comparable at all, and the
+    ## estimated metric reached a higher observed log likelihood in every
+    ## replicate, recovered the marginal three times better, and made the fit
+    ## insensitive to the coefficient bounds that the other one needed.
+    scoreGainExplore = as.integer(getOption("saemix.scoreGainExplore", 0L)),
+    scoreGainExploreGain = getOption("saemix.scoreGainExploreGain", NULL),
+    ## OFF by default, on both scales, until the step scaling is fixed.
+    ##
+    ## Checked against plain saemix on identical data -- the population there
+    ## is an ordinary multivariate normal, which saemix fits by a closed-form M
+    ## step sharing no code with this -- the estimated metric lands 25% low on
+    ## the correlation (0.340 against 0.455) and low on both typical values,
+    ## from any starting value tried and unchanged at 2500 iterations. The
+    ## per-coordinate metric on the same data agrees with saemix to three
+    ## decimals on the transformed-additive scale and gets the correlation
+    ## right on the parameter scale.
+    ##
+    ## The cause is a step size rather than the metric itself: the recursion
+    ## moves by gain * scoreScale * A * score, and with the per-coordinate
+    trace = list(), lastJoint = NULL,
     timing = list(estep = 0, batchUpdate = 0, iteration = 0))
   for (name in names(values)) assign(name, values[[name]], envir = .cop)
   .cop$fingerprint <- copulaFingerprint(vine, d, margins)
@@ -267,10 +376,14 @@ copulaSnapshot <- function(state = copulaGet(), etaIndex = NULL,
     "conditioning", "conditioningName", "fingerprint", "modelFrozen",
     "lastJoint", "npar.margin", "npar.vine", "estimatedMargins",
     "estimatedVine", "timing", "trace", "populationScale", "proposalOmega",
+    "fisherCovariance",
     "likelihoodTarget", "numericalPolicy", "populationAlgorithm",
     "scoreScale", "scoreScaleRequested", "scoreScaleSource",
     "scoreFiniteDifference", "scoreProjection",
-    "scoreGainScale", "scoreGainPower", "scoreGainOffset", "scoreBurn",
+    "scoreGainPower", "scoreBurn", "scorePreheat", "scoreGainStart",
+    "scoreHeatEnd", "scoreFilter", "scoreFilterTime", "scoreSmoothing",
+    "scoreStepMean", "scoreGradMean",
+    "scoreMetricRidge", "scoreMetricRidgeAbsolute",
     "scoreState", "rwProposalFrozen", "rwProposalFreezeIteration",
     "rwBlockSizeFrozen")
   out <- state[intersect(keep, names(state))]

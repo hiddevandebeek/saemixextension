@@ -44,7 +44,15 @@ combined_simulate <- function(seed, n = 250L) {
   data <- data.frame(id = rep(seq_len(n), each = length(truth$times)),
     dose = truth$dose, time = rep(truth$times, n))
   prediction <- combined_pk(psi, data$id, cbind(data$dose, data$time))
-  data$y <- pmax(prediction * (1 + truth$residual * rnorm(nrow(data))), 1e-8)
+  ## No floor. The proportional error keeps y positive whenever |residual *
+  ## epsilon| < 1, which holds to sixteen decimal places at 12%; the earlier
+  ## pmax(., 1e-8) instead replaced predictions below 1e-8 -- a late sample
+  ## from a high-clearance subject -- by a value tens of thousands of residual
+  ## standard deviations above the model, a gross outlier that inflated the
+  ## residual SD, pulled that subject's posterior off the upper tail and was
+  ## the signal the latent-shape He4 test picked up. It affected 225 of the
+  ## 500 published datasets (289 observations).
+  data$y <- prediction * (1 + truth$residual * rnorm(nrow(data)))
   list(data = data, psi = psi, crp = crp, truth = truth, margins = margins,
     correlation = R,
     vine = copulaGaussianRvineFromCor(R, combined_structure()))
@@ -199,7 +207,7 @@ combined_response_vpc <- function(psi, residual, truth, arm, seed,
   set.seed(seed); times <- truth$times
   id <- rep(seq_len(nrow(psi)), each = length(times)); time <- rep(times, nrow(psi))
   prediction <- combined_pk(psi, id, cbind(truth$dose, time))
-  y <- pmax(prediction * (1 + residual * rnorm(length(prediction))), 1e-8)
+  y <- prediction * (1 + residual * rnorm(length(prediction)))
   value <- aggregate(y ~ time, data.frame(time, y), function(x)
     quantile(x, probabilities, names = FALSE))
   matrixValue <- if (is.matrix(value$y)) value$y else do.call(rbind, value$y)
@@ -328,8 +336,51 @@ combined_run_replicate <- function(replicate, resultRoot, force = FALSE,
   summary$incumbentRuntime <- c(0, fits$elapsed[["incumbent"]])
   summary$replicate <- replicate
   summary <- merge(summary, likelihood, by = "arm", sort = FALSE)
+  ## Iteration traces, kept so convergence can be plotted after the fact.
+  ##
+  ## The recursion already records one entry per iteration -- the gain, the
+  ## objective, the largest score component, the typical values, the margin
+  ## parameters and the copula parameters -- but the fits are cleared at the end
+  ## of a replicate, so none of it survives unless it is copied into the result
+  ## here. At 3000 iterations and two arms across 500 replicates the full trace
+  ## is far more than any plot needs, so it is thinned to every tenth iteration,
+  ## with the last iteration always kept so the endpoint is exact.
+  ##
+  ## Margin parameters are named differently per arm -- a lognormal has a scale
+  ## where a gamma has a shape -- so the two arms are not rbind-ed together;
+  ## each is stored under its own name and carries whatever columns it has.
+  traceFrame <- function(state, arm) {
+    entries <- state$trace
+    if (!length(entries)) return(NULL)
+    keep <- unique(c(seq(1L, length(entries), by = 10L), length(entries)))
+    rows <- lapply(entries[keep], function(entry) {
+      head <- data.frame(arm = arm, replicate = replicate,
+        kiter = entry$kiter, gamma = entry$gamma, value = entry$value,
+        scoreMax = entry$scoreMax, residual = entry$residual)
+      beta <- entry$beta
+      if (length(beta)) names(beta) <- paste0("beta", seq_along(beta))
+      margin <- entry$margin
+      if (length(margin)) names(margin) <- paste0("margin_",
+        if (is.null(names(margin))) seq_along(margin) else names(margin))
+      copula <- entry$copula
+      if (length(copula)) names(copula) <- paste0("copula", seq_along(copula))
+      extra <- c(beta, margin, copula)
+      if (!length(extra)) return(head)
+      cbind(head, as.data.frame(as.list(extra)))
+    })
+    columns <- unique(unlist(lapply(rows, names)))
+    rows <- lapply(rows, function(r) {
+      for (missing in setdiff(columns, names(r))) r[[missing]] <- NA_real_
+      r[, columns, drop = FALSE]
+    })
+    do.call(rbind, rows)
+  }
+  trace <- list(standard = traceFrame(states$standard, "Gaussian FREM"),
+    flexible = traceFrame(states$flexible, "Flexible FREM"))
+
   result <- list(schema = 1L, replicate = replicate, dataSeed = seedBase + 1L,
     truth = simulation$truth, summary = summary, density = density,
+    trace = trace,
     relationship = relationship, populationVpc = populationVpc,
     conditionalVpc = conditionalVpc,
     selectionTable = fits$selection$table,

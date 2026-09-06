@@ -6,7 +6,7 @@
 ## not the one specified.
 
 suppressMessages({library(rvinecopulib); library(VineCopula); library(mvtnorm)})
-source("R/etaCopula.R"); source("R/simEta.R")
+source("copula/R/etaCopula.R"); source("copula/R/simEta.R")
 
 nFail <- 0L
 ok <- function(lbl, pass, extra = "") {

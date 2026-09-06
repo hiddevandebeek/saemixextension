@@ -5,6 +5,19 @@
 ## covariates are integrated out.  Thus only the PK/PD random effects have to be
 ## carried in the SAEM Markov state when covariates are error-free.
 
+## Missing-covariate pattern label per row. Building one string per subject is
+## wasteful in the innermost loop when nothing is missing, which is the usual
+## case, so complete conditioning short-circuits to a single shared pattern.
+copulaMissingPattern <- function(conditioning, observed = TRUE) {
+  n <- nrow(conditioning)
+  if (!ncol(conditioning)) return(rep("", n))
+  missing <- is.na(conditioning)
+  if (!any(missing))
+    return(rep(paste(rep(if (observed) "TRUE" else "FALSE", ncol(conditioning)),
+      collapse = ""), n))
+  apply(if (observed) !missing else missing, 1L, paste0, collapse = "")
+}
+
 copulaIsFullGaussianVine <- function(vine, d = as.integer(dim(vine)["dim"])) {
   if (!inherits(vine, "vinecop_dist") || length(d) != 1L || is.na(d) || d < 1L)
     return(FALSE)
@@ -28,6 +41,46 @@ copulaGaussianLogDensity <- function(z, correlation) {
   -.5 * (ncol(z) * log(2 * pi) + 2 * sum(log(diag(U))) +
            colSums(standardized^2))
 }
+
+## The copula density itself, log c(z) = log phi_R(z) - sum_j log phi(z_j).
+##
+## Every caller that wanted a copula density formed it as the joint Gaussian
+## minus rowSums(dnorm(z, log = TRUE)). Written out, the d/2 log(2 pi) terms
+## cancel exactly and what is left is a single quadratic form in R^-1 - I, so
+## the reduction over dnorm and one of the two quadratic forms both disappear.
+## The decomposition is cached against the correlation, because a fit evaluates
+## the same copula for every MCMC batch.
+copulaGaussianCopulaDecomposition <- function(correlation) {
+  U <- try(chol(correlation), silent = TRUE)
+  if (inherits(U, "try-error"))
+    stop("Gaussian-copula FREM correlation matrix is not positive definite")
+  list(logDet = 2 * sum(log(diag(U))),
+    excess = chol2inv(U) - diag(ncol(correlation)))
+}
+
+copulaGaussianCopulaLogDensity <- local({
+  ## One remembered decomposition, compared by identity. The MCMC kernels hold
+  ## the correlation fixed across an E step and hit it every time; the score
+  ## objective moves the correlation with each candidate and misses, which
+  ## costs one Cholesky. Keeping a single entry is deliberate -- a keyed cache
+  ## would grow without bound over a fit, and forming the key would cost more
+  ## than the decomposition it protects.
+  last <- NULL; value <- NULL
+  function(z, correlation, decomposition = NULL) {
+    z <- as.matrix(z)
+    if (!ncol(z)) return(rep(0, nrow(z)))
+    if (is.null(decomposition)) {
+      correlation <- as.matrix(correlation)
+      if (is.null(last) || !identical(last, correlation)) {
+        last <<- correlation
+        value <<- copulaGaussianCopulaDecomposition(correlation)
+      }
+      decomposition <- value
+    }
+    -.5 * (decomposition$logDet +
+      rowSums((z %*% decomposition$excess) * z))
+  }
+})
 
 copulaGaussianRectangleProbability <- function(lower, upper, mean, covariance) {
   lower <- as.numeric(lower); upper <- as.numeric(upper)
@@ -112,8 +165,13 @@ copulaGaussianFremMixedLogDensity <- function(x, margins, correlation) {
 ## u = F(k-) + v {F(k)-F(k-)}.  The augmented contribution is log P(k), so
 ## integrating v recovers the exact rectangle mass without putting a
 ## parameter-dependent threshold score in the Markov state.
+## `referenceScore` is qnorm of the fixed reference. It is constant for a whole
+## score step, whereas this is called for every candidate the optimiser tries,
+## so the caller forms it once and hands it in; without it the same normal
+## quantile is taken over every row of every evaluation.
 copulaGaussianFremAugmentedEvaluateMargins <- function(
-    x, margins, categoricalUniform = NULL, referenceUniform = NULL) {
+    x, margins, categoricalUniform = NULL, referenceUniform = NULL,
+    referenceScore = NULL) {
   x <- as.matrix(x); d <- ncol(x)
   if (length(margins) != d)
     stop("augmented Gaussian-copula margin dimension mismatch")
@@ -142,7 +200,8 @@ copulaGaussianFremAugmentedEvaluateMargins <- function(
       ok <- u > 0 & u < 1
       rows <- which(reference)
       if (any(ok)) {
-        z[rows[ok], j] <- stats::qnorm(u[ok])
+        z[rows[ok], j] <- if (is.null(referenceScore))
+          stats::qnorm(u[ok]) else referenceScore[rows[ok], j]
         ## Density with respect to the fixed reference du is uniform.
         logMargin[rows[ok], j] <- 0
       }
@@ -277,6 +336,34 @@ copulaGaussianFremAugmentMixedConditioning <- function(
     method = "exact-fixed-support-latent-uniform")
 }
 
+## A few remembered results, addressed by their content. A FREM fit evaluates
+## the same conditioning column against the same fixed covariate margin on
+## every objective and every gradient call of the score step, which for a gamma
+## covariate means a pgamma, a dgamma and a qnorm over every subject and chain
+## each time.
+##
+## Keying on the column's position was tried first and thrashes: the augmented
+## evaluator re-enters this function one column at a time, where every column
+## is position one. The key is therefore the margin and the values themselves,
+## compared exactly, and the margin is compared first because it is cheap. A
+## miss only costs the recomputation it would have done anyway.
+.copulaMarginColumnCache <- new.env(parent = emptyenv())
+.copulaMarginColumnCache$entries <- list()
+
+copulaMarginColumnRemembered <- function(margin, values) {
+  for (entry in .copulaMarginColumnCache$entries)
+    if (identical(entry$name, margin$name) &&
+        identical(entry$parameters, margin$parameters) &&
+        identical(entry$values, values)) return(entry)
+  NULL
+}
+
+copulaMarginColumnRemember <- function(entry) {
+  entries <- c(list(entry), .copulaMarginColumnCache$entries)
+  .copulaMarginColumnCache$entries <- entries[seq_len(min(8L, length(entries)))]
+  invisible(NULL)
+}
+
 copulaGaussianFremEvaluateMargins <- function(x, margins) {
   x <- as.matrix(x)
   if (ncol(x) != length(margins))
@@ -289,6 +376,13 @@ copulaGaussianFremEvaluateMargins <- function(x, margins) {
     if (!identical(margin$type, "continuous"))
       stop("Gaussian-copula FREM currently requires continuous margins")
     values <- x[, j]
+    remembered <- copulaMarginColumnRemembered(margin, values)
+    if (!is.null(remembered)) {
+      z[, j] <- remembered$z
+      logMargin[, j] <- remembered$logMargin
+      valid <- valid & remembered$valid
+      next
+    }
     if (identical(margin$name, "normal")) {
       mean <- if ("mean" %in% names(margin$parameters))
         unname(margin$parameters["mean"]) else 0
@@ -315,10 +409,17 @@ copulaGaussianFremEvaluateMargins <- function(x, margins) {
       localZ[ok] <- stats::qnorm(probability[ok])
     }
     valid <- valid & ok
+    columnZ <- rep(NA_real_, length(values))
+    columnDensity <- rep(NA_real_, length(values))
     if (any(ok)) {
+      columnZ[ok] <- localZ[ok]
+      columnDensity[ok] <- density[ok]
       z[ok, j] <- localZ[ok]
       logMargin[ok, j] <- density[ok]
     }
+    copulaMarginColumnRemember(list(values = values, name = margin$name,
+      parameters = margin$parameters, z = columnZ,
+      logMargin = columnDensity, valid = ok))
   }
   list(z = z, logMargin = logMargin, valid = valid)
 }
@@ -334,9 +435,7 @@ copulaGaussianFremContinuousPriorKernel <- function(vine, margins) {
         !identical(margin$type, "continuous"), logical(1))))
     return(NULL)
   correlation <- copulaGaussianRvineCor(vine, d)
-  U <- chol(correlation)
-  logDeterminant <- 2 * sum(log(diag(U)))
-  logTwoPi <- log(2 * pi)
+  decomposition <- copulaGaussianCopulaDecomposition(correlation)
   negative <- function(E) {
     E <- as.matrix(E)
     if (ncol(E) != d || anyNA(E) || any(!is.finite(E)))
@@ -345,18 +444,15 @@ copulaGaussianFremContinuousPriorKernel <- function(vine, margins) {
     answer <- rep(Inf, nrow(E))
     rows <- which(evaluated$valid)
     if (length(rows)) {
-      z <- evaluated$z[rows, , drop = FALSE]
-      standardized <- forwardsolve(t(U), t(z))
-      logGaussian <- -.5 * (d * logTwoPi + logDeterminant +
-        colSums(standardized^2))
-      logDensity <- logGaussian - rowSums(stats::dnorm(z, log = TRUE)) +
+      logDensity <- copulaGaussianCopulaLogDensity(
+        evaluated$z[rows, , drop = FALSE], decomposition = decomposition) +
         rowSums(evaluated$logMargin[rows, , drop = FALSE])
       answer[rows] <- -logDensity
     }
     answer
   }
-  list(negative = negative, correlation = correlation, chol = U,
-    method = "cached-continuous-gaussian-prior")
+  list(negative = negative, correlation = correlation,
+    chol = chol(correlation), method = "cached-continuous-gaussian-prior")
 }
 
 ## Observed-data population density for rows (eta, covariates). NA is permitted
@@ -379,8 +475,7 @@ copulaGaussianFremLogPrior <- function(E, vine, margins, dEta,
 
   R <- copulaGaussianRvineCor(vine, d)
   result <- rep(-Inf, nrow(E))
-  observedPattern <- if (ncol(conditioning))
-    apply(!is.na(conditioning), 1L, paste0, collapse = "") else rep("", nrow(E))
+  observedPattern <- copulaMissingPattern(conditioning)
 
   for (pattern in unique(observedPattern)) {
     rows <- which(observedPattern == pattern)
@@ -420,7 +515,7 @@ copulaGaussianFremConditioningLogDensity <- function(
   if (length(margins) != d || !copulaIsFullGaussianVine(vine, d))
     stop("invalid Gaussian FREM conditioning density specification")
   R <- copulaGaussianRvineCor(vine, d); result <- rep(-Inf, nrow(conditioning))
-  pattern <- apply(!is.na(conditioning), 1L, paste0, collapse = "")
+  pattern <- copulaMissingPattern(conditioning)
   for (key in unique(pattern)) {
     rows <- which(pattern == key)
     observed <- which(!is.na(conditioning[rows[1L], ]))
@@ -448,7 +543,7 @@ copulaGaussianFremConditional <- function(conditioning, vine, margins, dEta) {
   etaIndex <- seq_len(dEta)
   mean <- matrix(0, nrow(conditioning), dEta)
   covariance <- vector("list", nrow(conditioning))
-  pattern <- apply(!is.na(conditioning), 1L, paste0, collapse = "")
+  pattern <- copulaMissingPattern(conditioning)
   patternState <- vector("list", length(unique(pattern)))
   names(patternState) <- unique(pattern)
 
@@ -504,7 +599,7 @@ copulaGaussianFremImputeMissingConditioning <- function(
   if (!all(etaEvaluated$valid))
     stop("eta draw lies outside its declared margin during covariate augmentation")
   R <- copulaGaussianRvineCor(vine, d); answer <- conditioning
-  pattern <- apply(is.na(conditioning), 1L, paste0, collapse = "")
+  pattern <- copulaMissingPattern(conditioning, observed = FALSE)
   for (key in unique(pattern)) {
     rows <- which(pattern == key)
     missingLocal <- which(is.na(conditioning[rows[1L], ]))
@@ -668,7 +763,7 @@ copulaGaussianFremCategoricalKernel <- function(
       identical(names(m$parameters), "sd"), logical(1)))
   etaScale <- if (allNormal) vapply(etaMargins, function(m)
     unname(m$parameters[["sd"]]), numeric(1)) else NULL
-  pattern <- apply(!is.na(conditioning), 1L, paste0, collapse = "")
+  pattern <- copulaMissingPattern(conditioning)
   states <- vector("list", length(unique(pattern))); names(states) <- unique(pattern)
 
   for (key in names(states)) {

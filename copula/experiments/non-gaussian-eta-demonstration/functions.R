@@ -35,7 +35,8 @@ ng_simulate <- function(seed, n = 180L) {
   data <- data.frame(id = rep(seq_len(n), each = length(truth$times)),
     dose = truth$dose, time = rep(truth$times, n))
   prediction <- ng_pk(psi, data$id, cbind(data$dose, data$time))
-  data$y <- pmax(prediction * (1 + truth$residual * rnorm(nrow(data))), 1e-8)
+  ## No floor: see combined-natural-frem-study/functions.R for why.
+  data$y <- prediction * (1 + truth$residual * rnorm(nrow(data)))
   list(data = data, psi = psi, truth = truth, margins = margins)
 }
 
@@ -48,7 +49,12 @@ ng_fit_pair <- function(simulation, seedBase) {
   gaussianPopulation <- gaussianCopulaFrem(
     etaSd = c(.25, .40),
     correlation = matrix(c(1, .10, .10, 1), 2L, 2L),
-    scoreBurn = 75L, gainScale = .18, gainPower = .80)
+    ## `gainScale = .18` was dropped: the three-phase gain schedule replaced the
+    ## single scale factor, and the argument no longer exists. Everything else
+    ## is left alone, so the run takes the current defaults -- Fisher
+    ## preconditioning, the metric ridge at 1e-3, the gain exponent inside the
+    ## (0.75, 1] the convergence conditions require.
+    scoreBurn = 75L, gainPower = .80)
   gaussianTime <- system.time(gaussian <- saemix(
     ng_model(), ng_data(simulation$data), ng_control(seedBase + 11L),
     population = gaussianPopulation))["elapsed"]
@@ -122,7 +128,7 @@ ng_vpc <- function(psi, residual, truth, arm, seed) {
   id <- rep(seq_len(nrow(psi)), each = length(times))
   time <- rep(times, nrow(psi))
   prediction <- ng_pk(psi, id, cbind(truth$dose, time))
-  y <- pmax(prediction * (1 + residual * rnorm(length(prediction))), 1e-8)
+  y <- prediction * (1 + residual * rnorm(length(prediction)))
   value <- aggregate(y ~ time, data.frame(time, y), function(x)
     quantile(x, c(.01, .10, .50, .90, .99), names = FALSE))
   matrixValue <- if (is.matrix(value$y)) value$y else do.call(rbind, value$y)

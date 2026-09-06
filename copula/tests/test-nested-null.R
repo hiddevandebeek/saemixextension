@@ -19,7 +19,7 @@ ok <- function(lbl, pass, extra = "") {
 d <- 4; sdv <- PK_SD
 Om <- diag(sdv) %*% PK_R %*% diag(sdv)
 vnG <- etaVineGaussian(PK_R)
-copulaSet(vnG, sdv)
+copulaSet(vnG, sdv, populationAlgorithm = "common-q")
 
 ## N1 -- copulaUeta differs from the saemix quadratic form by a CONSTANT only.
 ## The kernels use differences, so a constant offset is harmless; a non-constant
@@ -59,7 +59,8 @@ for (rr in 1:3) {
   set.seed(70 + rr); sD <- simPK(120, vnG)
   copulaClear()
   fS <- saemix::saemix(pkSaemixModel(), pkSaemixData(sD$data), ctl(rr))
-  copulaSet(etaVineGaussian(PK_R), sdv, familySet = "gaussian")
+  copulaSet(etaVineGaussian(PK_R), sdv, familySet = "gaussian",
+            populationAlgorithm = "common-q")
   fC <- saemix::saemix(pkSaemixModel(), pkSaemixData(sD$data), ctl(rr))
   sdC <- copulaGet()$sd; copulaClear()
   fixS <- fS@results@fixed.effects; fixC <- fC@results@fixed.effects
@@ -74,7 +75,8 @@ ok("N5b sd of well-identified etas match stock", max(sdRel) < 0.10,
    sprintf("max rel=%.3f", max(sdRel)))
 ok("N5c weakly-identified sd(V2) no worse than stock", mean(errC) <= mean(errS) + 0.02,
    sprintf("|err| stock=%.3f copula=%.3f (truth %.2f)", mean(errS), mean(errC), PK_SD[4]))
-copulaSet(etaVineGaussian(PK_R), sdv, familySet = "gaussian")
+copulaSet(etaVineGaussian(PK_R), sdv, familySet = "gaussian",
+          populationAlgorithm = "common-q")
 
 ## N6 -- the copula path recovers the correlation structure it was given.
 e6 <- max(abs(cov2cor(copulaOmega()) - PK_R))

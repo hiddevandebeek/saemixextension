@@ -7,7 +7,7 @@ gaussianCopulaFrem <- function(etaSd = NULL, etaMargins = NULL,
                                correlation = NULL, structure = NULL,
                                covariateNames = NULL,
                                scoreScale = "auto", scoreBurn = 50L,
-                               gainScale = 0.2, gainPower = 0.8,
+                               gainPower = 0.8,
                                finiteDifference = 1e-4,
                                projection = 24) {
   if (!is.null(parameterMargins)) {
@@ -56,7 +56,7 @@ gaussianCopulaFrem <- function(etaSd = NULL, etaMargins = NULL,
       scale = "parameter", conditioning = conditioning,
       populationAlgorithm = "score-sa",
       scoreScale = scoreScale, scoreBurn = scoreBurn,
-      scoreGainScale = gainScale, scoreGainPower = gainPower,
+      scoreGainPower = gainPower,
       scoreFiniteDifference = finiteDifference,
       scoreProjection = projection))
   }
@@ -117,7 +117,7 @@ gaussianCopulaFrem <- function(etaSd = NULL, etaMargins = NULL,
     scale = "transformed-additive", conditioning = conditioning,
     populationAlgorithm = "score-sa",
     scoreScale = scoreScale, scoreBurn = scoreBurn,
-    scoreGainScale = gainScale, scoreGainPower = gainPower,
+    scoreGainPower = gainPower,
     scoreFiniteDifference = finiteDifference,
     scoreProjection = projection)
 }

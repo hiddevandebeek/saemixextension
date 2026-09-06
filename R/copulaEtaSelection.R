@@ -42,21 +42,44 @@ copulaPosteriorEtaDraws <- function(object, nsamp, max.iter, seed,
   if (any(!is.finite(current))) current[,] <- 0
   conditioning <- if (state$dConditioning > 0L)
     as.matrix(state$conditioning) else NULL
+  ## The proposal must use the model's own population law. A standard
+  ## transformed-additive fit has centred eta margins and uses the Gaussian
+  ## FREM prior; a fitted flexible model carries natural-scale margins, whose
+  ## densities take (x, typical, par) rather than (x, par), so it needs the
+  ## natural kernels. Without this dispatch the posterior of a flexible fit
+  ## cannot be sampled at all, which is what previously confined margin
+  ## screening to a Normal/lognormal incumbent.
+  natural <- identical(state$populationScale, "parameter")
+  transform <- as.integer(object["model"]["transform.par"][index])
   if (is.null(conditioning)) {
-    priorNegative <- function(eta) -copulaGaussianFremLogPrior(eta,
-      state$vine, state$margins, state$dEta, "joint")
-    priorRandom <- function() copulaMarginsQuantile(
-      rvinecopulib::rvinecop(n, state$vine), state$margins)
+    if (natural) {
+      kernel <- copulaNaturalWorkingPriorKernel(state$vine,
+        state$margins[seq_len(dEta)], centre, transform)
+      priorNegative <- kernel$negative
+      priorRandom <- kernel$random
+    } else {
+      priorNegative <- function(eta) -copulaGaussianFremLogPrior(eta,
+        state$vine, state$margins, state$dEta, "joint")
+      priorRandom <- function() copulaMarginsQuantile(
+        rvinecopulib::rvinecop(n, state$vine), state$margins)
+    }
   } else {
-    kernel <- copulaGaussianFremConditionalKernel(conditioning,
-      state$vine, state$margins, state$dEta)
+    kernel <- if (natural)
+      copulaNaturalFremConditionalKernel(conditioning, state$vine,
+        state$margins, state$dEta, centre, transform) else
+      copulaGaussianFremConditionalKernel(conditioning, state$vine,
+        state$margins, state$dEta)
     priorNegative <- kernel$negative
     priorRandom <- kernel$random
   }
+  ## Hoist the response layout and the mean-phi template: neither depends on
+  ## the proposed eta, and this closure is called twice per MCMC iteration.
+  responseLayout <- copulaResponseLayout(object, 1L)
+  phiTemplate <- object["results"]["mean.phi"]
   response <- function(eta) {
-    phi <- object["results"]["mean.phi"]
+    phi <- phiTemplate
     phi[, index] <- centre + eta
-    as.numeric(copulaResponseLogLikBatch(object, phi, 1L))
+    as.numeric(copulaResponseLogLikBatch(object, phi, 1L, responseLayout))
   }
   proposal <- as.matrix(state$proposalOmega)
   if (any(dim(proposal) != c(dEta, dEta)) ||
@@ -131,6 +154,59 @@ copulaFlattenEtaDraws <- function(draws, conditioning = NULL) {
   cbind(eta, conditioning[rep(seq_len(n), samples), , drop = FALSE])
 }
 
+## Generalized-Pareto shape of the importance-weight tail (Zhang and Stephens
+## 2009; Vehtari et al.). It estimates how many moments the weight distribution
+## has: below 0.5 the variance is finite, below 0.7 the estimator is usable,
+## above 0.7 it is not, and above 1 the mean itself is not reliably estimable.
+##
+## This is the diagnostic effective sample size cannot supply. A Student
+## candidate against a Normal incumbent has ESS near 0.94 -- apparently healthy
+## -- while its tail shape is about 1.7. ESS reports the concentration of the
+## weights that were drawn; k reports the tail that was not.
+
+copulaGpdShape <- function(x) {
+  x <- sort(as.numeric(x)); n <- length(x)
+  if (n < 20L || !is.finite(x[n]) || x[n] <= 0) return(NA_real_)
+  m <- 30L + as.integer(sqrt(n))
+  quartile <- x[max(1L, as.integer(n / 4 + .5))]
+  if (!is.finite(quartile) || quartile <= 0) return(NA_real_)
+  theta <- 1 / x[n] + (1 - sqrt(m / (seq_len(m) - .5))) / (3 * quartile)
+  ## profile log-likelihood at each theta; k = mean log1p(-theta x) is the
+  ## conditional shape estimate and is positive for a heavy tail, which is the
+  ## case of interest, so a non-positive k is what makes a grid point invalid.
+  profile <- vapply(theta, function(t) {
+    if (!is.finite(t) || t >= 0) return(-Inf)
+    k <- mean(log1p(-t * x))
+    if (!is.finite(k) || k <= 0) return(-Inf)
+    n * (log(-t / k) - k - 1)
+  }, numeric(1))
+  if (all(!is.finite(profile))) return(NA_real_)
+  shift <- profile - max(profile[is.finite(profile)])
+  w <- exp(shift); w[!is.finite(w)] <- 0
+  if (sum(w) <= 0) return(NA_real_)
+  thetaHat <- sum(theta * w) / sum(w)
+  k <- mean(log1p(-thetaHat * x))
+  if (!is.finite(k)) return(NA_real_)
+  ## weakly informative shrinkage toward 0.5, as in the reference implementation
+  unname(k * n / (n + 10) + 5 / (n + 10))
+}
+
+copulaParetoK <- function(logWeight) {
+  logWeight <- as.matrix(logWeight)
+  vapply(seq_len(nrow(logWeight)), function(i) {
+    row <- logWeight[i, ]
+    row <- row[is.finite(row)]
+    if (length(row) < 20L) return(NA_real_)
+    w <- exp(row - max(row))
+    if (diff(range(w)) < 1e-12) return(0)      # no tail: weights are constant
+    size <- min(as.integer(.2 * length(w)), as.integer(3 * sqrt(length(w))))
+    if (size < 20L) return(NA_real_)
+    ordered <- sort(w)
+    cutoff <- ordered[length(w) - size]
+    copulaGpdShape(ordered[(length(w) - size + 1L):length(w)] - cutoff)
+  }, numeric(1))
+}
+
 copulaPosteriorBridgeMetricFromLogWeight <- function(logWeight) {
   logWeight <- as.matrix(logWeight)
   nSubject <- nrow(logWeight)
@@ -161,9 +237,14 @@ copulaPosteriorBridgeMetricFromLogWeight <- function(logWeight) {
         (nSample * average^2)
     }
   }
+  paretoK <- copulaParetoK(logWeight)
   list(deltaLogLik = sum(ratio), mcse = sqrt(sum(relativeVariance)),
     minimumEssFraction = min(ess) / nSample,
     medianEssFraction = stats::median(ess) / nSample,
+    maximumParetoK = if (all(is.na(paretoK))) NA_real_ else
+      max(paretoK, na.rm = TRUE),
+    medianParetoK = if (all(is.na(paretoK))) NA_real_ else
+      stats::median(paretoK, na.rm = TRUE),
     perSubject = ratio)
 }
 
@@ -320,9 +401,7 @@ copulaPopulationFromEtaSelection <- function(state, margins) {
     scoreScale = state$scoreScale %||% 1,
     scoreFiniteDifference = state$scoreFiniteDifference %||% 1e-4,
     scoreProjection = state$scoreProjection %||% 24,
-    scoreGainScale = state$scoreGainScale %||% .2,
     scoreGainPower = state$scoreGainPower %||% .8,
-    scoreGainOffset = state$scoreGainOffset %||% 30,
     scoreBurn = state$scoreBurn %||% 50L)
 }
 

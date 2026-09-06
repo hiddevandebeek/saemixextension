@@ -38,6 +38,29 @@ copulaNaturalMarginRegistry <- function() {
       shape <- pi / (sqrt(6) * max(logDeviationSd(values, typical), 1e-3))
       copulaNaturalMarginWeibull(shape)
     }, TRUE)
+    ## The generalized gamma nests lognormal at Q -> 0 and gamma at Q = 1, so
+    ## a search restricted to it and lognormal is a proper nesting rather than
+    ## a comparison of unrelated shapes. Registering it makes that search
+    ## expressible; the constructor already existed but was unreachable from
+    ## the selection routines, which listed only the registry.
+    copulaRegisterNaturalMargin("generalizedgamma", "positive",
+      function(values, typical)
+        copulaNaturalMarginGeneralizedGamma(
+          max(logDeviationSd(values, typical), 1e-2), 1), TRUE)
+    ## The two-component lognormal mixture is deliberately *not* registered.
+    ## The constructor remains available for anyone who wants to supply one
+    ## explicitly, but it is kept out of the automatic search: its moment-based
+    ## start was not reliably recovering a bimodal target, and a mixture that
+    ## fits badly is worse than an honest report that no named family fits.
+    copulaRegisterNaturalMargin("logitnormal", "unit",
+      function(values, typical)
+        copulaNaturalMarginLogitNormal(max(stats::sd(
+          stats::qlogis(values) - stats::qlogis(typical)), 1e-3)), TRUE)
+    copulaRegisterNaturalMargin("beta", "unit", function(values, typical) {
+      spread <- max(mean((values - typical)^2), 1e-8)
+      precision <- max(mean(typical * (1 - typical)) / spread - 1, .05)
+      copulaNaturalMarginBeta(precision)
+    }, TRUE)
   }
   entries <- as.list(.naturalMarginRegistry)
   entries[setdiff(names(entries), ".builtins")]

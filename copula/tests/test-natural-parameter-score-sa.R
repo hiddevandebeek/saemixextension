@@ -55,7 +55,7 @@ stopifnot(inherits(selection, "saemixNaturalMarginSelection"),
 fit <- saemix(model, dataset, control, population = population)
 state <- copulaGet(fit)
 stopifnot(identical(state$populationScale, "parameter"),
-  identical(state$lastJoint$scoreMethod, "hybrid-fixed-reference-path-score"),
+  identical(state$lastJoint$scoreMethod, "natural-psi-centered-difference-score"),
   isTRUE(state$lastJoint$scoreTheory$runtimeConditionsObserved),
   state$lastJoint$postFreezeProjectionCount == 0L,
   state$lastJoint$postFreezeBacktrackCount == 0L,

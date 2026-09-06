@@ -9,6 +9,9 @@
 \alias{copulaMarginCovariateGamma}
 \alias{copulaMarginCovariateWeibull}
 \alias{copulaFitCovariateMargin}
+\alias{copulaMarginBernoulli}
+\alias{copulaMarginOrdinal}
+\alias{copulaMarginCategorical}
 \title{Marginal Distributions for Gaussian-Copula FREM}
 \usage{
 copulaMargin(name, parameters, lower, upper,

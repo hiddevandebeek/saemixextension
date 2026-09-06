@@ -17,40 +17,54 @@ copulaRowLogSumExp <- function(x) {
   out
 }
 
-copulaResponseLogLikBatch <- function(saemixObject, phi, B) {
+## Everything the batch response likelihood needs that does not depend on phi:
+## slot extraction, the replicated design frame, the observation indicator and
+## its scatter index. The MCMC and importance loops call the likelihood
+## thousands of times for one fitted object, so this is built once and reused.
+copulaResponseLayout <- function(saemixObject, B) {
   dat <- saemixObject["data"]
   model <- saemixObject["model"]
-  res <- saemixObject["results"]
   N <- dat["N"]; ntot <- dat["ntot.obs"]
   yobs <- dat["data"][, dat["name.response"]]
   xnames <- c(dat["name.predictors"], dat["name.cens"],
               dat["name.mdv"], dat["name.ytype"])
-  xind <- dat["data"][, xnames, drop=FALSE]
-  IdB <- rep(0:(B - 1L), each=ntot) * N +
-    rep(dat["data"][, "index"], B)
-  XB <- do.call(rbind, rep(list(xind), B))
-  yB <- rep(yobs, B)
-  psi <- transphi(phi, model["transform.par"])
+  xind <- dat["data"][, xnames, drop = FALSE]
+  io <- matrix(0, nrow = N, ncol = max(dat["nind.obs"]))
+  for (i in seq_len(N)) io[i, seq_len(dat["nind.obs"][i])] <- 1
+  ioB <- matrix(rep(t(io), B), ncol = ncol(io), byrow = TRUE)
+  list(N = N, B = as.integer(B), model = model,
+    respar = saemixObject["results"]["respar"],
+    transform = model["transform.par"], modeltype = model["modeltype"],
+    errorModel = model["error.model"],
+    IdB = rep(0:(B - 1L), each = ntot) * N + rep(dat["data"][, "index"], B),
+    XB = do.call(rbind, rep(list(xind), B)),
+    yB = rep(yobs, B), rows = ncol(io),
+    scatter = which(t(ioB) != 0))
+}
+
+copulaResponseLogLikBatch <- function(saemixObject, phi, B,
+                                      layout = NULL) {
+  if (is.null(layout)) layout <- copulaResponseLayout(saemixObject, B)
+  N <- layout$N; model <- layout$model
+  IdB <- layout$IdB; XB <- layout$XB; yB <- layout$yB
+  psi <- transphi(phi, layout$transform)
   f <- model["model"](psi, IdB, XB)
-  idxExp <- which(model["error.model"] == "exponential")
+  idxExp <- which(layout$errorModel == "exponential")
   if (length(idxExp)) for (j in idxExp) {
     take <- XB$ytype == j
     f[take] <- log(cutoff(f[take]))
   }
-  if (model["modeltype"] == "structural") {
-    g <- error(f, res["respar"], XB$ytype)
+  if (layout$modeltype == "structural") {
+    g <- error(f, layout$respar, XB$ytype)
     obs <- -0.5 * ((yB - f) / g)^2 - log(g) - 0.5 * log(2*pi)
     obs[!is.finite(f) | !is.finite(g) | g <= 0 | !is.finite(obs)] <- -Inf
   } else {
     obs <- as.numeric(f)
     obs[!is.finite(obs)] <- -Inf
   }
-  io <- matrix(0, nrow=N, ncol=max(dat["nind.obs"]))
-  for (i in seq_len(N)) io[i, seq_len(dat["nind.obs"][i])] <- 1
-  ioB <- matrix(rep(t(io), B), ncol=ncol(io), byrow=TRUE)
-  DYF <- matrix(0, nrow=ncol(io), ncol=N * B)
-  DYF[which(t(ioB) != 0)] <- obs
-  matrix(colSums(DYF), nrow=N, ncol=B)
+  DYF <- matrix(0, nrow = layout$rows, ncol = N * layout$B)
+  DYF[layout$scatter] <- obs
+  matrix(colSums(DYF), nrow = N, ncol = layout$B)
 }
 
 llisCopula.saemix <- function(saemixObject, defensive=0.25, batch=100L,
@@ -137,8 +151,17 @@ llisCopula.saemix <- function(saemixObject, defensive=0.25, batch=100L,
       yobs <- dat["data"][, dat["name.response"]]
       logConst <- -sum(yobs[dat["data"][, "ytype"] %in% idxExp])
     }
+    ## Batch size is constant except possibly for the final remainder, so one
+    ## response layout per distinct B is built and then reused.
+    layoutCache <- list()
     while (used < M) {
       B <- min(batch, M - used); k <- k + 1L
+      layoutKey <- as.character(B)
+      importanceLayout <- layoutCache[[layoutKey]]
+      if (is.null(importanceLayout)) {
+        importanceLayout <- copulaResponseLayout(saemixObject, B)
+        layoutCache[[layoutKey]] <- importanceLayout
+      }
       nPrior <- round(B * defensive); eps <- nPrior / B
       priorBlocks <- priorBlocks + nPrior
       nT <- B - nPrior
@@ -185,7 +208,8 @@ llisCopula.saemix <- function(saemixObject, defensive=0.25, batch=100L,
         copulaLogAddExp(log1p(-eps) + logQT, log(eps) + logPrior)
       phi <- res["cond.mean.phi"][subjectRow, , drop=FALSE]
       phi[, etaIndex] <- phiEta
-      logObs <- copulaResponseLogLikBatch(saemixObject, phi, B)
+      logObs <- copulaResponseLogLikBatch(saemixObject, phi, B,
+        importanceLayout)
       invalid <- invalid + rowSums(!is.finite(logObs))
       logW <- logObs + matrix(logPrior - logQ, nrow=N, ncol=B)
       ## A heavy-tailed proposal may produce a few non-finite structural-model

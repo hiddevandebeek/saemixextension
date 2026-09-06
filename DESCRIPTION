@@ -24,7 +24,7 @@ License: GPL (>= 2)
 LazyLoad: yes
 LazyData: yes
 Imports: graphics, stats, methods, gridExtra, ggplot2, grid, rlang, mclust, scales, MASS, rvinecopulib, mvtnorm
-Suggests: testthat, survival
+Suggests: testthat, survival, mirai
 Depends: npde (>= 3.2)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -70,5 +70,13 @@ Collate:
     'copulaScoreRuntime.R'
     'copulaEtaSelection.R'
     'naturalMarginSelection.R'
+    'tiltedMarginSelection.R'
+    'latentShapeTest.R'
+    'marginSpecification.R'
+    'marginEvidence.R'
+    'scoreFisherInformation.R'
+    'scoreSandwich.R'
+    'scoreStandardErrors.R'
+    'scoreConvergence.R'
     'stepwise.R'
     'zzz.R'

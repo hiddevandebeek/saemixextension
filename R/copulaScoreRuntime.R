@@ -10,13 +10,23 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
   nchains <- as.integer(nchains)
   if (length(nchains) != 1L || is.na(nchains) || nchains < 1L)
     stop("score batch requires a positive chain count")
-  if (is.null(subject) || length(subject) != nrow(eta) ||
-      any(!is.finite(subject)) || any(subject != as.integer(subject)) ||
-      any(subject < 1L))
+  ## The subject layout is fixed for a run but this is called once per batch
+  ## per iteration, so the checks are cached against the vector itself. They
+  ## are also written to avoid unique() and match(), which were together the
+  ## single largest self-time in a profile of the fit: subject labels are
+  ## positive integers, so tabulate() counts them directly.
+  if (is.null(subject) || length(subject) != nrow(eta))
     stop("score batch requires one positive integer subject label per row")
+  if (!identical(.cop$subjectChecked, subject)) {
+    if (any(!is.finite(subject)) || any(subject != as.integer(subject)) ||
+        any(subject < 1L))
+      stop("score batch requires one positive integer subject label per row")
+    counts <- tabulate(as.integer(subject))
+    if (any(counts[counts > 0L] != nchains))
+      stop("score batch requires every subject exactly once per chain")
+    .cop$subjectChecked <- subject
+  }
   subject <- as.integer(subject)
-  if (any(tabulate(match(subject, unique(subject))) != nchains))
-    stop("score batch requires every subject exactly once per chain")
   .cop$curEta <- eta
 
   conditioning <- NULL
@@ -88,7 +98,31 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
       .cop$dEta %||% ncol(eta))
   .cop$curConditioningComplete <- conditioning
   referenceUniform <- matrix(NA_real_, nrow(eta), .cop$d)
-  if (identical(.cop$populationScale, "parameter")) {
+  ## Two exact augmentations of the natural-parameter model, with the same
+  ## observed-data score in expectation and very different Monte Carlo
+  ## variance.
+  ##
+  ## Holding the natural parameter psi fixed ("psi") makes the population
+  ## score the ordinary complete-data score, d/dtheta log p(psi; theta): its
+  ## per-subject variance is set by the population information, and the
+  ## response term does not enter because psi does not move with theta. This
+  ## is the same augmentation the transformed-additive fit uses, and for a
+  ## margin whose support does not depend on its parameters -- every family
+  ## in the registry -- it is all that Fisher's identity needs.
+  ##
+  ## Holding a fixed percentile u = F(psi; theta) instead ("reference") makes
+  ## psi = Q(u; theta) move with theta, so the score carries the derivative of
+  ## the response likelihood along that path. That is the construction the
+  ## paper's Appendix A gives for margins with parameter-dependent support,
+  ## where it is unavoidable. Elsewhere it is only a cost: the response
+  ## derivative at a posterior draw is of the order of the individual
+  ## response information, which dwarfs the population information, so the
+  ## stochastic score is an order of magnitude noisier and the recursion
+  ## wanders along any weakly identified direction. Measured on an identical
+  ## lognormal model fitted both ways, the reference route left the averaged
+  ## score forty times larger and the typical clearance five per cent off.
+  if (identical(.cop$populationScale, "parameter") &&
+      identical(.cop$scoreNaturalRoute %||% "psi", "reference")) {
     if (!hasDesign)
       stop("parameter-scale score fitting requires a complete design-aware eta block")
     predictor <- copulaLocation(design, as.numeric(beta), locationMap)
@@ -101,7 +135,8 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
         stop("natural parameter could not be mapped to a fixed reference interior")
       referenceUniform[, j] <- u
     }
-  }
+  } else if (identical(.cop$populationScale, "parameter") && !hasDesign)
+    stop("parameter-scale score fitting requires a complete design-aware eta block")
   movingEta <- which(vapply(.cop$margins[seq_len(.cop$dEta)],
     function(margin) inherits(margin, "saemix_copula_margin") &&
       copulaMarginHasMovingSupport(margin), logical(1)))
@@ -188,7 +223,12 @@ copulaScoreResponseBlock <- function(phi, randomIndex, transform, id, x, y,
       answer
     }
   })
+  ## Which latent row each observation belongs to. The aggregate score never
+  ## needed it -- it sums over observations and divides -- but a per-subject
+  ## score does, because the residual block has to be attributed back to the
+  ## row whose random effects produced the prediction.
   list(y = y, f = predictions, etype = x$ytype, pres = residual,
+    row = as.integer(id),
     free = copulaScoreResidualIndices(errorModel), evaluate = evaluate,
     gradient = gradient,
     batchResidualMle = if (length(errorModel) == 1L &&
@@ -197,7 +237,8 @@ copulaScoreResponseBlock <- function(phi, randomIndex, transform, id, x, y,
 }
 
 ## Apply one score update to the current controlled-MCMC batch.
-copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
+copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
+                             total = NA_integer_, explore = NA_integer_) {
   if (!identical(.cop$mode, "joint") || !isTRUE(.cop$modelFrozen))
     stop("score-sa population update requires a frozen joint model")
   hasDesign <- !is.null(.cop$curPhi) && !is.null(.cop$curX) &&
@@ -218,8 +259,104 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
         matrix(0, nrow = nrow(locationMap), ncol = .cop$dConditioning))
   }
   scoreBurn <- .cop$scoreBurn %||% 50L
-  gain <- .cop$scoreGainScale *
-    (kiter + .cop$scoreGainOffset)^(-.cop$scoreGainPower)
+  ## Gain schedule. Single phase by default: it decays from the first
+  ## iteration, which is the safe choice for a gradient step whose scale is not
+  ## known in advance.
+  ##
+  ## The two-phase schedule of Kuhn and Lavielle (2004) holds the gain constant
+  ## while exploring and decays afterwards, the decaying phase being the one
+  ## the convergence conditions govern. Their constant is one, but that is a
+  ## gain on SAEM's averaging of sufficient statistics, where one means "no
+  ## memory"; it is not a step size. Taking it literally here -- a full step
+  ## against an information matrix estimated from a handful of iterations --
+  ## broke six fits in eight and left the survivors no better. What is kept is
+  ## the shape rather than the constant: the initial gain, held rather than
+  ## decayed, for the exploration phase only.
+  ## The learning step of Baey et al. (2023), section 3.4.1, reproduced as
+  ## published:
+  ##
+  ##   pre-heating   gamma_k = gamma_0^(1 - k/K_pre),  rising from gamma_0 to 1
+  ##   heating       gamma_k = 1
+  ##   decreasing    gamma_k = (k - K_heat)^-alpha
+  ##
+  ## with their proposed gamma_0 = 1e-4, K_pre = 1000 and alpha = 2/3. The
+  ## constant gain of one is meaningful because the step is I_k^{-1} v_k, a
+  ## Newton step, whose natural length is one.
+  ##
+  ## The end of the heating phase is theirs too, and adaptive: "averaging the
+  ## norms of the gradients calculated with a third order filter of constant
+  ## 1/1000 and to stop the heating phase when the norm of the averaged
+  ## gradient does not decrease anymore".
+  ## How long to ramp for is the one place where their design does not
+  ## transfer, and the adaptation is ours rather than theirs.
+  ##
+  ## Their algorithm has no iteration budget. `estim()` loops over
+  ## `itertools.count()`: it runs until the heating phase ends, then until
+  ## `step_mean @ grad_mean * 1000 <= 1e-6`, and only then takes a fixed
+  ## smoothing window of five or ten thousand iterations. The run length is an
+  ## output. Their simulation study uses `smart_start = 2000` with
+  ## `N_smooth = 5000`, on top of a thousand MCMC-only steps, so a run is
+  ## eight to thirteen thousand iterations and the ramp is about a fifth of it.
+  ##
+  ## saemix has a fixed `nbiter.saemix`, so a fraction has to be chosen, and
+  ## theirs is the sensible one to copy: a fifth, capped at the 2000 they
+  ## actually use. Leaving it at a flat 1000, as the paper's text proposes,
+  ## spends two thirds of a 1500-iteration run on a ramp whose gain is
+  ## negligible until its last fifth -- measured, the difference between 53 and
+  ## 96 per cent coverage, and between 1.05 and 0.27 standard deviations of
+  ## bias.
+  preheat <- max(1L, as.integer(.cop$scorePreheat %||%
+    (if (is.finite(total)) min(2000L, max(50L, as.integer(total %/% 5L)))
+     else 1000L)))
+  start <- .cop$scoreGainStart %||% 1e-4
+  alpha <- .cop$scoreGainPower %||% 0.8
+  heatEnd <- .cop$scoreHeatEnd %||% NA_integer_
+  gain <- if (kiter <= preheat) start^(1 - kiter / preheat) else
+    if (!is.finite(heatEnd)) 1 else (kiter - heatEnd)^(-alpha)
+  preheating <- kiter <= preheat
+  ## Terminal averaging pass. The parameter step is frozen and the per-subject
+  ## mean scores are averaged with gain 1/k from the start of the pass, so the
+  ## information reported at the end is the outer product of scores averaged
+  ## over the whole pass at one fixed parameter value.
+  terminalLength <- .cop$scoreTerminal %||% 0L
+  terminalStart <- if (is.finite(total) && terminalLength > 0L)
+    total - terminalLength + 1L else Inf
+  terminal <- kiter >= terminalStart
+  deltaGain <- if (terminal) 1 / (kiter - terminalStart + 1) else gain
+  ## Their reference implementation averages theta over the smoothing phase,
+  ## which the algorithm box in the paper does not show: `estim()` returns the
+  ## mean of theta over its final ten thousand iterations, alongside the mean
+  ## of the information over the same window. Averaging therefore begins when
+  ## their convergence criterion is met, not at a fixed iteration.
+  averageFrom <- if (isTRUE(.cop$scoreSmoothing)) 0L else Inf
+  if (terminal && !isTRUE(.cop$scoreTerminalStarted)) {
+    ## Move to the Polyak average before freezing: the terminal pass has to
+    ## average scores at the estimate that is reported, not at the last
+    ## iterate.
+    st <- .cop$scoreState
+    if (!is.null(st) && isTRUE(st$averagingStarted) && !is.null(st$average)) {
+      layoutNow <- copulaGaussianFremScoreLayout(.cop$margins, .cop$vine,
+        .cop$d, .cop$dEta, design, locationMap, betaStart,
+        if (hasDesign) .cop$betaFree else NULL, TRUE, response)
+      moved <- copulaGaussianFremScoreMaterialize(st$average, layoutNow)
+      .cop$margins <- moved$margins; .cop$vine <- moved$vine
+      if (hasDesign) { .cop$betaCurrent <- moved$beta; betaStart <- moved$beta }
+      if (!is.null(moved$residual)) {
+        .cop$residualJoint <- moved$residual
+        if (!is.null(response)) response$pres <- moved$residual
+      }
+      st$internal <- st$average
+      copulaAssertFrozen(.cop$vine)
+    }
+    ## Restart the per-subject averages from scratch at the frozen value,
+    ## whether or not a Polyak average was available to move to.
+    if (!is.null(st)) {
+      st$deltaSubject <- NULL; st$deltaSubjectA <- NULL; st$deltaSubjectB <- NULL
+      st$fisherCount <- 0L
+      .cop$scoreState <- st
+    }
+    .cop$scoreTerminalStarted <- TRUE
+  }
   answer <- copulaGaussianFremPopulationScoreStep(
     values, rep(1 / nrow(values), nrow(values)), .cop$margins, .cop$vine,
     .cop$d, .cop$dEta, gain,
@@ -228,14 +365,118 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
     state = .cop$scoreState, scoreScale = .cop$scoreScale,
     finiteDifference = .cop$scoreFiniteDifference,
     projection = .cop$scoreProjection,
-    adaptMetric = kiter <= scoreBurn, average = kiter > scoreBurn,
+    adaptMetric = kiter <= scoreBurn,
+    average = kiter > averageFrom && !terminal,
+    preheating = preheating,
+    smoothing = isTRUE(.cop$scoreSmoothing) && !terminal,
     useAverage = isTRUE(final), response = response,
+    freeze = terminal, deltaGain = deltaGain,
     categoricalUniform = .cop$curCategoricalUniform,
     referenceUniform = .cop$curReferenceUniform,
     populationScale = .cop$populationScale,
-    transform = .cop$transform)
+    transform = .cop$transform,
+    subject = .cop$subjectChecked)
 
+  ## The end of heating, and the start of smoothing, exactly as their
+  ## reference implementation computes them. Three details differ from the
+  ## prose in the paper and all three matter.
+  ##
+  ## The filter runs on the *preconditioned step* `I^-1 g`, not on the
+  ## gradient norm. It is initialised at zero and bias corrected, Adam style,
+  ## by dividing by an accumulating `mone`; initialising it at the current
+  ## value instead gives it nothing to descend from and it stops immediately.
+  ## Its time constant is 100, not 1000. Their code:
+  ##
+  ##   factor = -expm1(-1/tc);  mone += factor*(1-mone)
+  ##   m1 += factor*(val - m1); m2 += factor*(m1/mone - m2)
+  ##   m3 += factor*(m2/mone - m3);  unbiased = m3/mone
+  ##
+  ## and heating ends when the squared norm of the unbiased third moment stops
+  ## falling.
+  ##
+  ## The comparison is only meaningful once the filter has forgotten its
+  ## initial state. A cascade of three first-order filters with time constant
+  ## `tc` has an impulse response peaking at 2 tc and settling by about 3 tc;
+  ## before that the "unbiased" third moment is a weighted average of a handful
+  ## of steps, and two successive values differ by sampling noise, not by a
+  ## trend. Without a floor the criterion fired within three iterations of
+  ## heating in 115 of the 500 Gaussian-arm fits of the joint study and in 18
+  ## of the 820 primary-study fits (measured from their traces on 2026-09-05),
+  ## and a large-dataset run started twice the generating clearance stalled at
+  ## 4.2 against 3.5 because the decreasing gain arrived while the score was
+  ## still far from zero. The floor `3 tc` costs nothing when heating would
+  ## have lasted longer, which was the case in every remaining fit (the
+  ## shortest of them ran 380 iterations). Convergence theory (Fort et al.
+  ## 2016) constrains only the decreasing phase, so a longer heating phase is
+  ## always admissible; a shorter one is what stalls.
+  ##
+  ## Heating is also ended, at the latest, when the averaging floor below
+  ## begins, so that the Polyak average is always taken over decreasing-gain
+  ## iterates rather than over a constant-gain random walk.
+  if (kiter > preheat && !is.finite(.cop$scoreHeatEnd %||% NA_integer_)) {
+    step <- as.numeric(answer$preconditionedStep)
+    tc <- .cop$scoreFilterTime %||% 100
+    heatMin <- as.integer(ceiling(3 * tc))
+    f <- -expm1(-1 / tc)
+    st <- .cop$scoreFilter %||% list(mone = 0, m1 = 0 * step, m2 = 0 * step,
+      m3 = 0 * step, previous = NULL)
+    st$mone <- st$mone + f * (1 - st$mone)
+    st$m1 <- st$m1 + f * (step - st$m1)
+    st$m2 <- st$m2 + f * (st$m1 / st$mone - st$m2)
+    st$m3 <- st$m3 + f * (st$m2 / st$mone - st$m3)
+    unbiased <- st$m3 / st$mone
+    if (!is.null(st$previous) && kiter - preheat > heatMin &&
+        sum(unbiased^2) > sum(st$previous^2))
+      .cop$scoreHeatEnd <- as.integer(kiter)
+    st$previous <- unbiased
+    .cop$scoreFilter <- st
+  }
+  if (!is.finite(.cop$scoreHeatEnd %||% NA_integer_) && is.finite(total) &&
+      total > 0 && kiter >= as.integer(ceiling(.6 * total)))
+    .cop$scoreHeatEnd <- as.integer(kiter)
+  ## Their convergence criterion, which gates when the smoothing phase begins:
+  ## `estim()` drops iterations while `end_heating is None` or
+  ## `step_mean @ grad_mean * 1000 > 1e-6`, with both quantities formed as
+  ## `x = factor * (value - x)` -- written that way in their code, not as a
+  ## running mean -- and then averages theta and the information over the rest.
+  if (is.finite(.cop$scoreHeatEnd %||% NA_integer_)) {
+    sm <- .cop$scoreStepMean %||% rep(0, length(answer$score))
+    gm <- .cop$scoreGradMean %||% rep(0, length(answer$score))
+    .cop$scoreStepMean <- gain * (as.numeric(answer$preconditionedStep) - sm)
+    .cop$scoreGradMean <- gain * (as.numeric(answer$score) - gm)
+    if (!isTRUE(.cop$scoreSmoothing) &&
+        sum(.cop$scoreStepMean * .cop$scoreGradMean) * 1000 <= 1e-6) {
+      .cop$scoreSmoothing <- TRUE
+      .cop$scoreSmoothingStart <- as.integer(kiter)
+      .cop$scoreSmoothingSource <- "criterion"
+    }
+  }
+  ## A floor under the averaging phase.
+  ##
+  ## The criterion above is theirs and is the right test, but it is a test, and
+  ## on these models it was observed never to pass: across every replicate of
+  ## several studies the information was averaged over exactly zero iterations,
+  ## so what got reported was the last single Istar. That is the case this
+  ## file's own comment warns about -- the last matrix "leaves all of Delta's
+  ## sampling noise in it, which inflates the information and shrinks every
+  ## interval" -- and it is why reported standard errors came out below the
+  ## complete-data bound, which is impossible.
+  ##
+  ## Their reference implementation does not rely on the criterion alone
+  ## either: `estim()` waits for it and then always takes a further fixed block
+  ## of iterations to average over. Averaging over the last two fifths of the
+  ## run reproduces that, and it can only help -- if the criterion fires first
+  ## it still wins, and if it never fires there is an average instead of a
+  ## single draw. It affects the reported information only; the step continues
+  ## to use Istar, so the iterates are unchanged.
+  if (!isTRUE(.cop$scoreSmoothing) && is.finite(total) && total > 0 &&
+      kiter >= as.integer(ceiling(.6 * total))) {
+    .cop$scoreSmoothing <- TRUE
+    .cop$scoreSmoothingStart <- as.integer(kiter)
+    .cop$scoreSmoothingSource <- "floor"
+  }
   .cop$scoreState <- answer$state
+  .cop$fisherCovariance <- answer$fisherCovariance
   .cop$margins <- answer$margins
   .cop$vine <- answer$vine
   .cop$sdPrev <- answer$sd
@@ -248,7 +489,7 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL) {
 
   theory <- answer$scoreTheory
   theory$scoreScaleSource <- .cop$scoreScaleSource %||% "numeric-override"
-  theory$scoreMetric <- paste0("regularized diagonal empirical score-",
+  theory$scoreMetric <- paste0("Delattre-Kuhn empirical score-",
     "information inverse; adapted only through iteration ", scoreBurn)
   theory$proposalScaleFrozen <-
     !is.null(.cop$rwProposalFrozen) && kiter > scoreBurn

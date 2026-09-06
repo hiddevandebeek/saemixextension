@@ -262,10 +262,30 @@ normcdf<-function(x,mu=0,sigma=1)
   cutoff(pnorm(-(x-mu)/sigma,lower.tail=FALSE),1e-30)
 
 #############################
+## The partition of the observations by error type is a property of the data:
+## it is the same on every call of a fit, but sort(unique()) and one comparison
+## per type over every observation were being redone each time, and this is
+## called once per likelihood evaluation. Remembering the last partition gives
+## an identical result; anything unexpected (missing types, a vector that is
+## not the remembered one) falls back to computing it.
+.errorPartition <- local({
+  last <- NULL; value <- NULL
+  function(etype) {
+    if (!is.null(last) && identical(last, etype)) return(value)
+    types <- sort(unique(etype))
+    partition <- list(types = types,
+      rows = lapply(types, function(ityp) which(etype == ityp)))
+    if (!anyNA(etype)) { last <<- etype; value <<- partition }
+    partition
+  }
+})
+
 error<-function(f,ab,etype) { # etype: error model
   g<-f
-  for(ityp in sort(unique(etype))) {
-    g[etype==ityp]<-error.typ(f[etype==ityp],ab[((ityp-1)*2+1):(ityp*2)])
+  partition<-.errorPartition(etype)
+  for(k in seq_along(partition$types)) {
+    ityp<-partition$types[k]; rows<-partition$rows[[k]]
+    g[rows]<-error.typ(f[rows],ab[((ityp-1)*2+1):(ityp*2)])
   }
   return(g)
 }

@@ -32,7 +32,7 @@ population <- gaussianCopulaFrem(parameterMargins = parameterMargins,
   covariates = matrix(crp, ncol = 1, dimnames = list(NULL, "CRP")),
   covariateMargins = list(covariateMargin), correlation = R,
   structure = vine$structure, scoreBurn = 20L,
-  gainScale = .12, gainPower = .8)
+  gainPower = .8)
 control <- list(seed = 902102, save = FALSE, save.graphs = FALSE, print = FALSE,
   displayProgress = FALSE, warnings = FALSE, nbiter.saemix = c(80, 40),
   nbiter.mcmc = c(2, 1, 1, 0), ll.is = FALSE, fim = FALSE, map = FALSE)

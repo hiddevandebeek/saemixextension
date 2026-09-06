@@ -5,7 +5,11 @@
 ## variances and (near) the same rank correlations in both arms, so anything
 ## that separates them is dependence SHAPE, not dependence STRENGTH.
 
-source("R/etaCopula.R")
+if (!exists("etaVine", mode = "function")) {
+  helper <- if (file.exists("R/etaCopula.R")) "R/etaCopula.R" else
+    "copula/R/etaCopula.R"
+  source(helper)
+}
 
 ## family: rvinecopulib name ("gumbel", "clayton", "t", "frank", "joe")
 ## Negative-tau edges get the 90-degree rotation.
