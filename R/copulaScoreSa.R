@@ -1311,7 +1311,18 @@ copulaGaussianFremPopulationScoreStep <- function(
   projectionUpper <- state$projectionCentre + state$projectionWidth
   projected <- pmin(projectionUpper, pmax(projectionLower, proposal))
   clipped <- abs(projected - proposal) > 0
-  projectionEvent <- any(clipped)
+  ## The stochastic-approximation state is (theta, Delta): the per-subject
+  ## score averages are part of the recursion, and the truncation sets of
+  ## Fort et al. (2016) must be compact in that whole state. The Delta box is
+  ## a formal device with a half-width of 1e6 internal score units, doubled
+  ## together with the parameter box; a fit reports how often it was hit
+  ## (never, in every reported fit).
+  if (is.null(state$deltaWidth)) state$deltaWidth <- 1e6
+  deltaEvent <- !is.null(state$deltaSubject) &&
+    any(abs(state$deltaSubject) > state$deltaWidth)
+  if (deltaEvent) state$deltaTruncations <-
+    (state$deltaTruncations %||% 0L) + 1L
+  projectionEvent <- any(clipped) || deltaEvent
   state$projectionCount <- state$projectionCount + as.integer(projectionEvent)
   if (projectionEvent && !isTRUE(adaptMetric))
     state$postFreezeProjectionCount <- state$postFreezeProjectionCount + 1L
@@ -1321,6 +1332,7 @@ copulaGaussianFremPopulationScoreStep <- function(
     ## (2.1) of Fort, Moulines, Schreck and Vihola (2016): their union is the
     ## whole parameter space and each lies in the interior of the next.
     state$projectionWidth <- 2 * state$projectionWidth
+    state$deltaWidth <- 2 * state$deltaWidth
     state$projectionExpansions <- (state$projectionExpansions %||% 0L) + 1L
     ## Re-initialisation, as in Algorithm 2 of Fort et al. (2016) and the
     ## truncation scheme of Andrieu, Moulines and Priouret (2005): the iterate
@@ -1494,6 +1506,7 @@ copulaGaussianFremPopulationScoreStep <- function(
         "O(sum gamma_k * h_k^2) = O(sum gamma_k^2)",
       projectionCount = state$projectionCount,
       projectionExpansions = state$projectionExpansions %||% 0L,
+      deltaTruncations = state$deltaTruncations %||% 0L,
       backtrackCount = state$backtrackCount,
       noMoveCount = state$noMoveCount,
       postFreezeProjectionCount = state$postFreezeProjectionCount,
