@@ -13,7 +13,7 @@ copulaPopulation <- function(vine, margins = NULL, sd = NULL,
                              scoreBurn = 50L, scorePreheat = NULL,
                              scoreGainStart = 1e-4, scoreMetricRidge = 1e-3,
                              scoreMetricRidgeAbsolute = 1e-10,
-                             scoreNaturalRoute = c("psi", "reference"),
+                             scoreNaturalRoute = "psi",
                              scoreTerminal = 0L,
                              ## Accepted and ignored. The diagonal
                              ## preconditioner these belonged to has been
@@ -78,7 +78,7 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
                       scorePreheat = NULL, scoreGainStart = 1e-4,
                       scoreMetricRidge = 1e-3,
                       scoreMetricRidgeAbsolute = 1e-10,
-                      scoreNaturalRoute = c("psi", "reference"),
+                      scoreNaturalRoute = "psi",
                       scoreTerminal = 0L,
                       ## Accepted and ignored; see copulaPopulation.
                       scoreGainScale = NULL, scoreGainOffset = NULL,
@@ -87,11 +87,8 @@ copulaSet <- function(vine, margins = NULL, sd = NULL,
   committed <- FALSE
   on.exit(if (!committed) copulaRestoreState(previous), add = TRUE)
   populationScale <- match.arg(populationScale)
-  ## Which augmentation the parameter-scale score uses; see
-  ## copulaScoreBatchUpdate. "psi" holds the natural parameter fixed and is
-  ## the ordinary complete-data score; "reference" holds a fixed percentile
-  ## and differentiates through the quantile map and the response, which is
-  ## needed only when a margin's support moves with its parameters.
+  ## The parameter-scale score holds the natural parameter fixed and is the
+  ## ordinary complete-data score; see copulaScoreBatchUpdate.
   scoreNaturalRoute <- match.arg(scoreNaturalRoute)
 
   dots <- list(...)

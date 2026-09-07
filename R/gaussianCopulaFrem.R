@@ -165,13 +165,8 @@ copulaGaussianFremMixedLogDensity <- function(x, margins, correlation) {
 ## u = F(k-) + v {F(k)-F(k-)}.  The augmented contribution is log P(k), so
 ## integrating v recovers the exact rectangle mass without putting a
 ## parameter-dependent threshold score in the Markov state.
-## `referenceScore` is qnorm of the fixed reference. It is constant for a whole
-## score step, whereas this is called for every candidate the optimiser tries,
-## so the caller forms it once and hands it in; without it the same normal
-## quantile is taken over every row of every evaluation.
 copulaGaussianFremAugmentedEvaluateMargins <- function(
-    x, margins, categoricalUniform = NULL, referenceUniform = NULL,
-    referenceScore = NULL) {
+    x, margins, categoricalUniform = NULL) {
   x <- as.matrix(x); d <- ncol(x)
   if (length(margins) != d)
     stop("augmented Gaussian-copula margin dimension mismatch")
@@ -181,12 +176,6 @@ copulaGaussianFremAugmentedEvaluateMargins <- function(
     if (any(dim(categoricalUniform) != c(nrow(x), d)))
       stop("categorical augmentation must align with all population coordinates")
   }
-  if (is.null(referenceUniform))
-    referenceUniform <- matrix(NA_real_, nrow(x), d) else {
-    referenceUniform <- as.matrix(referenceUniform)
-    if (any(dim(referenceUniform) != c(nrow(x), d)))
-      stop("fixed-reference augmentation must align with all population coordinates")
-  }
   continuous <- which(vapply(margins, function(m)
     identical(m$type, "continuous"), logical(1)))
   discrete <- setdiff(seq_len(d), continuous)
@@ -194,27 +183,11 @@ copulaGaussianFremAugmentedEvaluateMargins <- function(
   logMargin <- matrix(NA_real_, nrow(x), d)
   valid <- rep(TRUE, nrow(x))
   for (j in continuous) {
-    reference <- is.finite(referenceUniform[, j])
-    if (any(reference)) {
-      u <- referenceUniform[reference, j]
-      ok <- u > 0 & u < 1
-      rows <- which(reference)
-      if (any(ok)) {
-        z[rows[ok], j] <- if (is.null(referenceScore))
-          stats::qnorm(u[ok]) else referenceScore[rows[ok], j]
-        ## Density with respect to the fixed reference du is uniform.
-        logMargin[rows[ok], j] <- 0
-      }
-      valid[rows] <- valid[rows] & ok
-    }
-    direct <- !reference
-    if (any(direct)) {
-      evaluated <- copulaGaussianFremEvaluateMargins(
-        matrix(x[direct, j], ncol = 1L), list(margins[[j]]))
-      z[direct, j] <- evaluated$z[, 1L]
-      logMargin[direct, j] <- evaluated$logMargin[, 1L]
-      valid[direct] <- valid[direct] & evaluated$valid
-    }
+    evaluated <- copulaGaussianFremEvaluateMargins(
+      matrix(x[, j], ncol = 1L), list(margins[[j]]))
+    z[, j] <- evaluated$z[, 1L]
+    logMargin[, j] <- evaluated$logMargin[, 1L]
+    valid <- valid & evaluated$valid
   }
   for (j in discrete) {
     margin <- margins[[j]]; value <- x[, j]
@@ -233,8 +206,7 @@ copulaGaussianFremAugmentedEvaluateMargins <- function(
     valid <- valid & ok
   }
   list(z = z, logMargin = logMargin, valid = valid,
-    categorical = discrete,
-    fixedReference = which(colSums(is.finite(referenceUniform)) > 0L))
+    categorical = discrete)
 }
 
 ## Draw the complete conditioning augmentation given a current eta draw and

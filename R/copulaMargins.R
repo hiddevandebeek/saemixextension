@@ -122,14 +122,6 @@ copulaMarginValidate <- function(margin, probe = TRUE) {
       length(p) != length(margin$roles) ||
       any(!is.finite(p)) || any(p < margin$lower) || any(p > margin$upper))
     stop("invalid marginal parameter vector or bounds")
-  supportFixed <- margin$metadata$parameter_independent_support
-  if (!is.null(supportFixed) &&
-      (length(supportFixed) != 1L || is.na(supportFixed)))
-    stop("invalid parameter-independent-support declaration")
-  if (identical(supportFixed, FALSE) &&
-      (!identical(margin$type, "continuous") ||
-       !isTRUE(margin$metadata$fixed_reference_quantile)))
-    stop("moving-support margins require a continuous fixed-reference quantile map")
   if (isTRUE(probe)) {
     q <- margin$quantile(c(.2, .5, .8), p)
     if (length(q) != 3L || any(!is.finite(q)))
@@ -139,15 +131,8 @@ copulaMarginValidate <- function(margin, probe = TRUE) {
     if (length(Fq) != 3L || any(!is.finite(Fq)) || any(Fq < 0 | Fq > 1) ||
         length(ld) != 3L || any(!is.finite(ld)))
       stop("margin density/CDF probe returned invalid values")
-    if (identical(supportFixed, FALSE) &&
-        max(abs(Fq - c(.2, .5, .8))) > 1e-6)
-      stop("moving-support margin CDF/quantile round trip is not accurate")
   }
   invisible(TRUE)
-}
-
-copulaMarginHasMovingSupport <- function(margin) {
-  identical(margin$metadata$parameter_independent_support, FALSE)
 }
 
 copulaMarginCenteredGamma <- function(shape = 4, sd = 1) {
@@ -516,77 +501,4 @@ copulaMarginsQuantile <- function(u, margins) {
   for (j in seq_along(margins))
     out[, j] <- margins[[j]]$quantile(u[, j], margins[[j]]$parameters)
   out
-}
-
-## Centered moving-support margins for latent eta coordinates.  Their means
-## remain zero, so they do not duplicate the saemix population location.
-copulaMarginUniformCentered <- function(sd = 1) {
-  half <- sqrt(3) * unname(sd)
-  copulaMargin("uniform-centered", c(half_width = half), 1e-6, 1e6,
-    log_density = function(x, par) {
-      h <- par[1L]; ifelse(x > -h & x < h, -log(2 * h), -Inf)
-    },
-    cdf = function(x, par) {
-      h <- par[1L]; pmin(1, pmax(0, (x + h) / (2 * h)))
-    },
-    quantile = function(u, par) par[1L] * (2 * u - 1),
-    random = function(n, par) stats::runif(n, -par[1L], par[1L]),
-    scale = function(par) par[1L] / sqrt(3), centered = TRUE,
-    set_scale = function(par, value) { par[1L] <- sqrt(3) * value; par },
-    roles = "scale", scale_is_sd = TRUE,
-    metadata = list(scale_definition = "standard deviation"),
-    support_fixed = FALSE)
-}
-
-copulaMarginCovariateUniform <- function(lower, upper) {
-  if (!is.finite(lower) || !is.finite(upper) || lower >= upper)
-    stop("uniform covariate bounds must be finite and increasing")
-  copulaMargin("uniform", c(lower = unname(lower), log_width = log(upper - lower)),
-    c(-1e12, log(1e-8)), c(1e12, log(1e12)),
-    log_density = function(x, par) {
-      lo <- par["lower"]; hi <- lo + exp(par["log_width"])
-      ifelse(x > lo & x < hi, -par["log_width"], -Inf)
-    },
-    cdf = function(x, par) {
-      lo <- par["lower"]; pmin(1, pmax(0,
-        (x - lo) / exp(par["log_width"])))
-    },
-    quantile = function(u, par)
-      par["lower"] + exp(par["log_width"]) * u,
-    random = function(n, par)
-      par["lower"] + exp(par["log_width"]) * stats::runif(n),
-    scale = function(par) exp(par["log_width"]) / sqrt(12),
-    centered = FALSE, roles = c("location", "scale"), scale_is_sd = TRUE,
-    metadata = list(variable_role = "conditioning",
-      scale_definition = "standard deviation"), support_fixed = FALSE)
-}
-
-## Adapter for any distribution exposing compatible d/p/q functions.  The
-## caller explicitly chooses native parameters, bounds, and centring; this
-## prevents unsafe guessing from the heterogeneous stats::Distributions APIs.
-copulaMarginDistribution <- function(distr, parameters, lower, upper,
-                                     free = rep(TRUE, length(parameters)),
-                                     type = c("continuous", "discrete"),
-                                     centered = FALSE, scale = NULL,
-                                     set_scale = NULL, cdf_left = NULL,
-                                     roles = NULL, scale_is_sd = FALSE,
-                                     support_fixed = NULL) {
-  type <- match.arg(type)
-  d <- get(paste0("d", distr), mode = "function")
-  p <- get(paste0("p", distr), mode = "function")
-  q <- get(paste0("q", distr), mode = "function")
-  r <- get0(paste0("r", distr), mode = "function")
-  call_with <- function(fun, x, par, extra = list())
-    do.call(fun, c(list(x), as.list(stats::setNames(par, names(parameters))), extra))
-  copulaMargin(distr, parameters, lower, upper, free = free,
-    log_density = function(x, par) call_with(d, x, par, list(log = TRUE)),
-    cdf = function(x, par) call_with(p, x, par),
-    quantile = function(u, par) call_with(q, u, par),
-    random = if (is.null(r)) NULL else function(n, par)
-      do.call(r, c(list(n), as.list(stats::setNames(par, names(parameters))))),
-    type = type, cdf_left = cdf_left, scale = scale,
-    set_scale = set_scale,
-    centered = centered, roles = roles, scale_is_sd = scale_is_sd,
-    metadata = list(adapter = "stats-distribution"),
-    support_fixed = support_fixed)
 }

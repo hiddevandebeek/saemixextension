@@ -284,8 +284,7 @@ copulaGaussianFremScoreMaterialize <- function(internal, layout,
 }
 
 copulaGaussianFremCompleteScoreInternal <- function(
-    internal, layout, E, w, numericalStep, skipMargins = integer(),
-    referenceUniform = NULL, perRow = FALSE) {
+    internal, layout, E, w, numericalStep, perRow = FALSE) {
   candidate <- try(copulaGaussianFremScoreMaterialize(internal, layout,
     buildVine = FALSE),
     silent = TRUE)
@@ -293,24 +292,7 @@ copulaGaussianFremCompleteScoreInternal <- function(
   residual <- if (layout$hasDesign)
     E - copulaLocation(layout$X, candidate$beta, layout$locMap) else
     sweep(E, 2L, candidate$delta, "-")
-  if (length(skipMargins)) {
-    referenceUniform <- as.matrix(referenceUniform)
-    z <- logMargin <- matrix(NA_real_, nrow(E), layout$d)
-    valid <- rep(TRUE, nrow(E))
-    for (j in seq_len(layout$d)) if (j %in% skipMargins) {
-      u <- referenceUniform[, j]
-      ok <- is.finite(u) & u > 0 & u < 1
-      valid <- valid & ok; z[ok, j] <- stats::qnorm(u[ok]); logMargin[ok, j] <- 0
-    } else {
-      local <- try(copulaGaussianFremEvaluateMargins(
-        matrix(residual[, j], ncol = 1L), list(candidate$margins[[j]])),
-        silent = TRUE)
-      if (inherits(local, "try-error")) return(NULL)
-      z[, j] <- local$z[, 1L]; logMargin[, j] <- local$logMargin[, 1L]
-      valid <- valid & local$valid
-    }
-    evaluated <- list(z = z, logMargin = logMargin, valid = valid)
-  } else evaluated <- try(copulaGaussianFremEvaluateMargins(
+  evaluated <- try(copulaGaussianFremEvaluateMargins(
     residual, candidate$margins), silent = TRUE)
   if (inherits(evaluated, "try-error") || !all(evaluated$valid)) return(NULL)
   R <- candidate$correlation
@@ -320,16 +302,6 @@ copulaGaussianFremCompleteScoreInternal <- function(
   scoreX <- matrix(NA_real_, nrow(E), layout$d)
   numerical <- character(); oneSided <- FALSE
   for (j in seq_len(layout$d)) {
-    if (j %in% skipMargins) {
-      ## A fixed-reference coordinate has uniform density in its retained
-      ## percentile and a parameter-invariant Gaussian score. Its complete
-      ## population score is therefore zero here; any response-path and direct-
-      ## row contribution is supplied by the declared hybrid coordinates.
-      index <- layout$marginLayout$index[[j]]
-      if (length(index)) parameterGradient[index] <- 0
-      scoreX[, j] <- 0
-      next
-    }
     local <- copulaGaussianMarginNativeScore(residual[, j],
       candidate$margins[[j]], evaluated$z[, j], zInfluence[, j],
       numericalStep)
@@ -407,12 +379,8 @@ copulaGaussianFremCompleteScoreInternal <- function(
       for (j in seq_len(layout$d)) {
         columns <- layout$marginLayout$index[[j]]
         if (!length(columns)) next
-        if (j %in% skipMargins) {
-          answer[, at + columns] <- 0
-        } else {
-          local <- marginRows[[j]]
-          answer[, at + columns] <- w * local
-        }
+        local <- marginRows[[j]]
+        answer[, at + columns] <- w * local
       }
       at <- at + layout$nMargin
     }
@@ -478,120 +446,6 @@ copulaGaussianFremCompleteScoreInternal <- function(
     residual = residual, evaluated = evaluated, oneSided = oneSided)
 }
 
-## Hybrid score for fixed-reference continuous coordinates.  At the current
-## parameter value E and Q_theta(U) coincide, so the ordinary complete score is
-## valid for every coordinate that does not move Q_theta(U).  Only population
-## locations feeding a referenced eta and parameters of referenced margins need
-## the full pathwise response derivative.  Evaluate centered differences for
-## those coordinates and retain the shared analytic margin, correlation and
-## residual scores everywhere else.
-copulaGaussianFremReferenceScoreInternal <- function(
-    internal, layout, E, w, numericalStep, referenceUniform, objective,
-    materializeState, perRow = FALSE, objectiveRows = NULL) {
-  referenceUniform <- as.matrix(referenceUniform)
-  referenced <- which(colSums(is.finite(referenceUniform)) > 0L)
-  if (!length(referenced))
-    return(copulaGaussianFremCompleteScoreInternal(
-      internal, layout, E, w, numericalStep))
-  base <- copulaGaussianFremCompleteScoreInternal(
-    internal, layout, E, w, numericalStep, skipMargins = referenced,
-    referenceUniform = referenceUniform, perRow = perRow)
-  if (is.null(base)) return(NULL)
-  ## The corrections below are applied in internal coordinates, so the rows
-  ## are carried that way too.
-  internalRows <- if (!isTRUE(perRow) || is.null(base$nativeRows)) NULL else
-    sweep(base$nativeRows, 2L,
-      copulaScoreInternalDerivative(internal, layout$lower, layout$upper), "*")
-
-  numericalIndex <- integer(); responsePathIndex <- integer()
-  movingEta <- intersect(referenced, seq_len(layout$dEta))
-  if (length(movingEta) && is.function(layout$response$evaluate) &&
-      layout$nLocation) {
-    if (layout$hasDesign) {
-      local <- which(vapply(layout$locationIndex, function(index)
-        any(layout$locMap[index, movingEta, drop = FALSE] != 0), logical(1)))
-    } else local <- intersect(movingEta, seq_len(layout$nLocation))
-    responsePathIndex <- c(responsePathIndex, local)
-  }
-  for (j in referenced) {
-    index <- layout$marginLayout$index[[j]]
-    if (length(index)) {
-      internalIndex <- layout$nLocation + index
-      if (j %in% movingEta && all(is.finite(referenceUniform[, j])))
-        responsePathIndex <- c(responsePathIndex, internalIndex) else
-        numericalIndex <- c(numericalIndex, internalIndex)
-    }
-  }
-  numericalIndex <- sort(unique(numericalIndex))
-  responsePathIndex <- sort(unique(responsePathIndex))
-  if (!length(c(numericalIndex, responsePathIndex))) {
-    base$numerical <- unique(c(base$numerical, "fixed-reference.none"))
-    return(base)
-  }
-
-  gradient <- base$gradient
-  oneSided <- isTRUE(base$oneSided)
-  ## A response-gradient callback differentiates the structural model once per
-  ## referenced eta coordinate. Parameter-specific directions then use only
-  ## quantile/materialization calls and a chain-rule dot product.
-  if (length(responsePathIndex) && is.function(layout$response$gradient)) {
-    candidate <- base$candidate
-    complete <- materializeState(candidate)
-    responseGradient <- try(layout$response$gradient(
-      complete$absolute[, seq_len(layout$dEta), drop = FALSE],
-      candidate$residual, movingEta, numericalStep), silent = TRUE)
-    if (inherits(responseGradient, "try-error") ||
-        any(dim(responseGradient) != c(nrow(E), layout$dEta)) ||
-        any(!is.finite(responseGradient))) return(NULL)
-    for (index in responsePathIndex) {
-      plus <- minus <- internal
-      plus[index] <- plus[index] + numericalStep
-      minus[index] <- minus[index] - numericalStep
-      plusCandidate <- try(copulaGaussianFremScoreMaterialize(
-        plus, layout, buildVine = FALSE), silent = TRUE)
-      minusCandidate <- try(copulaGaussianFremScoreMaterialize(
-        minus, layout, buildVine = FALSE), silent = TRUE)
-      if (inherits(plusCandidate, "try-error") ||
-          inherits(minusCandidate, "try-error")) return(NULL)
-      plusState <- materializeState(plusCandidate)
-      minusState <- materializeState(minusCandidate)
-      direction <- (plusState$absolute[, seq_len(layout$dEta), drop = FALSE] -
-        minusState$absolute[, seq_len(layout$dEta), drop = FALSE]) /
-        (2 * numericalStep)
-      contribution <- rowSums(responseGradient * direction) / nrow(E)
-      gradient[index] <- gradient[index] + sum(contribution)
-      if (!is.null(internalRows))
-        internalRows[, index] <- internalRows[, index] + contribution
-    }
-  } else numericalIndex <- sort(unique(c(numericalIndex,
-    responsePathIndex)))
-  for (index in numericalIndex) {
-    plus <- minus <- internal
-    plus[index] <- plus[index] + numericalStep
-    minus[index] <- minus[index] - numericalStep
-    fp <- objective(plus); fm <- objective(minus)
-    if (!is.finite(fp) || !is.finite(fm)) return(NULL)
-    gradient[index] <- (fp - fm) / (2 * numericalStep)
-    ## The same two evaluations, not summed: a difference of per-row objectives
-    ## is the per-row difference, so the rows come free with the aggregate.
-    if (!is.null(internalRows) && is.function(objectiveRows)) {
-      rowsPlus <- objectiveRows(plus); rowsMinus <- objectiveRows(minus)
-      if (is.null(rowsPlus) || is.null(rowsMinus)) return(NULL)
-      internalRows[, index] <- (rowsPlus - rowsMinus) / (2 * numericalStep)
-    }
-  }
-  base$gradient <- gradient
-  base$internalRows <- internalRows
-  base$nativeGradient <- gradient / copulaScoreInternalDerivative(
-    internal, layout$lower, layout$upper)
-  base$numerical <- unique(c(base$numerical,
-    if (length(responsePathIndex) && is.function(layout$response$gradient))
-      "fixed-reference.chain-rule-path" else
-        "fixed-reference.path-coordinates"))
-  base$oneSided <- oneSided
-  base
-}
-
 ## Complete-data score for the parameter scale with the natural parameters
 ## held fixed. Every coordinate -- population locations through their typical
 ## values, native margin parameters, correlation angles and residual-error
@@ -636,7 +490,6 @@ copulaGaussianFremPopulationScoreStep <- function(
     projection = 24, withMu = TRUE, adaptMetric = TRUE,
     average = FALSE, useAverage = FALSE, response = NULL,
     analyticScore = TRUE, categoricalUniform = NULL,
-    referenceUniform = NULL,
     populationScale = c("transformed-additive", "parameter"),
     transform = NULL, subject = NULL, preheating = FALSE,
     smoothing = FALSE, freeze = FALSE, deltaGain = gain) {
@@ -660,29 +513,11 @@ copulaGaussianFremPopulationScoreStep <- function(
   current <- copulaScoreToInternal(layout$native, layout$lower, layout$upper)
   discrete <- which(vapply(margins0, function(m)
     identical(m$type, "discrete"), logical(1)))
-  if (is.null(referenceUniform))
-    referenceUniform <- matrix(NA_real_, nrow(E), d) else {
-    referenceUniform <- as.matrix(referenceUniform)
-    if (any(dim(referenceUniform) != c(nrow(E), d)))
-      stop("score-sa fixed-reference augmentation does not align with the MCMC batch")
-  }
-  hasReference <- any(is.finite(referenceUniform))
-  ## Parameter-scale fit with the natural parameters held fixed: no reference
-  ## percentile has been supplied for the eta coordinates, so the score is the
-  ## ordinary complete-data score in psi (see copulaScoreBatchUpdate).
-  naturalPsi <- identical(populationScale, "parameter") &&
-    !any(is.finite(referenceUniform[, seq_len(dEta), drop = FALSE]))
-  if (naturalPsi && hasReference)
-    stop("parameter-scale psi augmentation cannot be combined with fixed-reference coordinates")
+  ## Parameter-scale fit: the natural parameters are held fixed, so the score
+  ## is the ordinary complete-data score in psi (see copulaScoreBatchUpdate).
+  naturalPsi <- identical(populationScale, "parameter")
   if (naturalPsi && (!layout$hasDesign || length(discrete)))
     stop("parameter-scale psi augmentation requires a design-aware continuous batch")
-  ## The fixed reference is constant for the whole step, so its Gaussian score
-  ## is too. Forming it once lets the parameter-scale path go through
-  ## inverse_score, which for families that have a closed form skips the
-  ## uniform entirely, and removes a qnorm over every row from every objective
-  ## and gradient evaluation.
-  referenceScore <- if (hasReference) stats::qnorm(referenceUniform) else
-    referenceUniform
   completeContinuous <- !length(discrete) && !anyNA(E)
   completeAugmented <- !anyNA(E) && (completeContinuous ||
     (!is.null(categoricalUniform) &&
@@ -696,27 +531,13 @@ copulaGaussianFremPopulationScoreStep <- function(
     location <- if (layout$hasDesign)
       copulaLocation(layout$X, candidate$beta, layout$locMap) else
       matrix(candidate$delta, nrow(E), d, byrow = TRUE)
-    if (identical(populationScale, "parameter")) {
+    if (naturalPsi) {
+      ## psi is the latent variable and does not move with the candidate;
+      ## only its typical value does.
       typical <- copulaWorkingToNatural(
         location[, seq_len(dEta), drop = FALSE], layout$transform)
-      if (naturalPsi) {
-        ## psi is the latent variable and does not move with the candidate;
-        ## only its typical value does.
-        absolute <- E[, seq_len(dEta), drop = FALSE]
-        psi <- copulaWorkingToNatural(absolute, layout$transform)
-        residual <- E
-        residual[, seq_len(dEta)] <- absolute -
-          location[, seq_len(dEta), drop = FALSE]
-        return(list(residual = residual, absolute = absolute,
-          typical = typical, natural = psi,
-          conditioning = if (d > dEta) E[, dEta + seq_len(d - dEta),
-            drop = FALSE] else matrix(numeric(), nrow(E), 0L)))
-      }
-      if (any(!is.finite(referenceUniform[, seq_len(dEta), drop = FALSE])))
-        stop("parameter-scale score materialization requires parameter reference uniforms")
-      psi <- copulaNaturalMarginsFromScore(referenceScore[, seq_len(dEta),
-        drop = FALSE], typical, candidate$margins[seq_len(dEta)])
-      absolute <- copulaNaturalToWorking(psi, layout$transform)
+      absolute <- E[, seq_len(dEta), drop = FALSE]
+      psi <- copulaWorkingToNatural(absolute, layout$transform)
       residual <- E
       residual[, seq_len(dEta)] <- absolute -
         location[, seq_len(dEta), drop = FALSE]
@@ -726,11 +547,6 @@ copulaGaussianFremPopulationScoreStep <- function(
           drop = FALSE] else matrix(numeric(), nrow(E), 0L)))
     }
     residual <- E - location
-    for (j in seq_len(d)) {
-      rows <- is.finite(referenceUniform[, j])
-      if (any(rows)) residual[rows, j] <- candidate$margins[[j]]$quantile(
-        referenceUniform[rows, j], candidate$margins[[j]]$parameters)
-    }
     list(residual = residual, absolute = location + residual)
   }
   ## Complete-data population terms for the psi augmentation: natural margins
@@ -781,12 +597,11 @@ copulaGaussianFremPopulationScoreStep <- function(
         sum(w * (copulaGaussianCopulaLogDensity(evaluated$z,
           candidate$correlation) + rowSums(evaluated$logMargin) +
           naturalJacobian))
-      } else if (completeAugmented || hasReference) {
-        evaluated <- if (completeContinuous && !hasReference)
+      } else if (completeAugmented) {
+        evaluated <- if (completeContinuous)
           copulaGaussianFremEvaluateMargins(residual, candidate$margins) else
           copulaGaussianFremAugmentedEvaluateMargins(residual,
-            candidate$margins, categoricalUniform, referenceUniform,
-            referenceScore)
+            candidate$margins, categoricalUniform)
         if (!all(evaluated$valid)) stop("invalid complete-data margin")
         sum(w * (copulaGaussianCopulaLogDensity(evaluated$z,
           candidate$correlation) + rowSums(evaluated$logMargin)))
@@ -801,17 +616,6 @@ copulaGaussianFremPopulationScoreStep <- function(
       return(-Inf)
     }
     if (!is.null(layout$response)) {
-      if (is.function(layout$response$evaluate) && hasReference) {
-        responseLog <- try(layout$response$evaluate(
-          completeState$absolute[, seq_len(layout$dEta), drop = FALSE],
-          candidate$residual), silent = TRUE)
-        if (inherits(responseLog, "try-error") ||
-            any(!is.finite(responseLog))) {
-          objectiveFailure <<- "moving-support response evaluation failed"
-          return(-Inf)
-        }
-        return(value + sum(responseLog) / nrow(E))
-      }
       responseSd <- try(error(layout$response$f, candidate$residual,
         layout$response$etype), silent = TRUE)
       if (inherits(responseSd, "try-error") ||
@@ -848,27 +652,17 @@ copulaGaussianFremPopulationScoreStep <- function(
     value <- try({
       evaluated <- if (naturalPsi)
         evaluateNatural(candidate, completeState) else
-        if (completeContinuous && !hasReference)
+        if (completeContinuous)
         copulaGaussianFremEvaluateMargins(residual, candidate$margins) else
         copulaGaussianFremAugmentedEvaluateMargins(residual,
-          candidate$margins, categoricalUniform, referenceUniform,
-          referenceScore)
+          candidate$margins, categoricalUniform)
       if (!all(evaluated$valid)) stop("invalid complete-data margin")
       w * (copulaGaussianCopulaLogDensity(evaluated$z,
         candidate$correlation) + rowSums(evaluated$logMargin) +
         (if (naturalPsi) naturalJacobian else 0))
     }, silent = TRUE)
     if (inherits(value, "try-error") || any(!is.finite(value))) return(NULL)
-    if (!is.null(layout$response) && is.function(layout$response$evaluate) &&
-        hasReference) {
-      responseLog <- try(layout$response$evaluate(
-        completeState$absolute[, seq_len(layout$dEta), drop = FALSE],
-        candidate$residual), silent = TRUE)
-      if (inherits(responseLog, "try-error") || any(!is.finite(responseLog)))
-        return(NULL)
-      value <- value + as.numeric(rowsum(responseLog, layout$response$row,
-        reorder = TRUE)) / nrow(E)
-    } else if (!is.null(layout$response) && naturalPsi) {
+    if (!is.null(layout$response) && naturalPsi) {
       responseLog <- fixedResponseLog(candidate)
       if (is.null(responseLog) || any(!is.finite(responseLog))) return(NULL)
       value <- value + as.numeric(rowsum(responseLog, layout$response$row,
@@ -884,23 +678,14 @@ copulaGaussianFremPopulationScoreStep <- function(
     residual <- completeState$residual
     evaluated <- try(if (naturalPsi)
       evaluateNatural(candidate, completeState) else
-      if (completeContinuous && !hasReference)
+      if (completeContinuous)
       copulaGaussianFremEvaluateMargins(residual, candidate$margins) else
-      if (completeAugmented || hasReference)
+      if (completeAugmented)
         copulaGaussianFremAugmentedEvaluateMargins(residual,
-          candidate$margins, categoricalUniform, referenceUniform,
-          referenceScore) else
+          candidate$margins, categoricalUniform) else
         stop("incomplete categorical state"), silent = TRUE)
     if (inherits(evaluated, "try-error") || !all(evaluated$valid)) return(FALSE)
     if (!is.null(layout$response)) {
-      if (is.function(layout$response$evaluate) && hasReference) {
-        responseLog <- try(layout$response$evaluate(
-          completeState$absolute[, seq_len(layout$dEta), drop = FALSE],
-          candidate$residual), silent = TRUE)
-        if (inherits(responseLog, "try-error") ||
-            any(!is.finite(responseLog))) return(FALSE)
-        return(TRUE)
-      }
       responseSd <- try(error(layout$response$f, candidate$residual,
         layout$response$etype), silent = TRUE)
       if (inherits(responseSd, "try-error") ||
@@ -925,10 +710,7 @@ copulaGaussianFremPopulationScoreStep <- function(
     (fisherInformation && !is.null(subject))
   analytic <- if (!analyticEligible) NULL else if (naturalPsi)
     copulaGaussianFremNaturalScoreInternal(current, layout, h,
-      objectiveRows, perRow = wantRows) else if (hasReference)
-    copulaGaussianFremReferenceScoreInternal(current, layout, E, w, h,
-      referenceUniform, objective, materializeState,
-      perRow = wantRows, objectiveRows = objectiveRows) else
+      objectiveRows, perRow = wantRows) else
     copulaGaussianFremCompleteScoreInternal(current, layout, E, w, h,
       perRow = wantRows)
   if (wantRows && !is.null(analytic) && !is.null(analytic$internalRows)) {
@@ -1405,7 +1187,6 @@ copulaGaussianFremPopulationScoreStep <- function(
     finiteDifference = h, gain = gain, scoreScale = scoreScale,
     scoreMethod = if (is.null(analytic)) "global-centered-difference" else
       if (naturalPsi) "natural-psi-centered-difference-score" else
-      if (hasReference) "hybrid-fixed-reference-path-score" else
         "analytic-with-declared-local-numerical-components",
     numericalScoreComponents = if (is.null(analytic)) "all" else
       analytic$numerical,
@@ -1479,9 +1260,7 @@ copulaGaussianFremPopulationScoreStep <- function(
       categoricalAugmentation = if (length(discrete))
         "fixed-support latent uniforms; exact rectangle recovered on integration" else
         "none",
-      movingSupportAugmentation = if (hasReference)
-        "fixed percentile coordinates; quantile and response paths differentiated" else
-        if (naturalPsi)
+      parameterScaleAugmentation = if (naturalPsi)
         "natural parameters held fixed; ordinary complete-data score" else
         "none",
       metricFrozen = !isTRUE(adaptMetric),

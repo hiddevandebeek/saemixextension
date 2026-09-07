@@ -28,9 +28,6 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 	## kernel; the fixed-support latent uniforms are drawn after the eta move for
 	## the complete score.  This preserves the exact likelihood mean field.
 	multiCategoricalScore <- scoreAlgorithm && nCategorical > 1L
-	movingEtaScore <- scoreAlgorithm && any(vapply(
-		population$margins[seq_len(population$dEta)],
-		copulaMarginHasMovingSupport, logical(1)))
 	if(scoreAlgorithm)
 		.cop$multiCategoricalExactKernel <- isTRUE(multiCategoricalScore)
 	if (scoreAlgorithm && opt$nbiter.mcmc[1L] < 1L)
@@ -104,8 +101,6 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 			copulaGaussianFremConditionalKernel(.conditioningM, population$vine,
 				population$margins, population$dEta)
 	if (!is.null(conditionalKernel)) Ueta <- conditionalKernel$negative
-	invalidMovingCurrent <- if(movingEtaScore) !is.finite(Ueta(etaM)) else
-		rep(FALSE,nrow(etaM))
 	for(u in seq_len(opt$nbiter.mcmc[1])) { # 1er noyau
 		etaMc<-if(!is.null(conditionalKernel)) conditionalKernel$random()
 		else if(!is.null(naturalKernel)) naturalKernel$random()
@@ -115,10 +110,9 @@ estep<-function(kiter, Uargs, Dargs, opt, mean.phi, varList, DYF, phiM) {
 		phiMc[,varList$ind.eta]<-mean.phiM[,varList$ind.eta]+etaMc
 		Uc.y<-compute.LLy(phiMc,Uargs,Dargs,DYF,varList$pres)
 		deltau<-Uc.y-U.y
-		ind<-which(invalidMovingCurrent | deltau<(-1)*log(runif(Dargs$NM)))
+		ind<-which(deltau<(-1)*log(runif(Dargs$NM)))
 		etaM[ind,]<-etaMc[ind,]
 		U.y[ind]<-Uc.y[ind]
-		invalidMovingCurrent[ind]<-FALSE
 	}
 	U.eta<-if(multiCategoricalScore) rep(0, nrow(etaM)) else Ueta(etaM)
 	

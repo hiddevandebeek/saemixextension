@@ -97,70 +97,13 @@ copulaScoreBatchUpdate <- function(eta, nchains, phi = NULL, design = NULL,
       eta, conditioning, .cop$vine, .cop$margins,
       .cop$dEta %||% ncol(eta))
   .cop$curConditioningComplete <- conditioning
-  referenceUniform <- matrix(NA_real_, nrow(eta), .cop$d)
-  ## Two exact augmentations of the natural-parameter model, with the same
-  ## observed-data score in expectation and very different Monte Carlo
-  ## variance.
-  ##
-  ## Holding the natural parameter psi fixed ("psi") makes the population
-  ## score the ordinary complete-data score, d/dtheta log p(psi; theta): its
-  ## per-subject variance is set by the population information, and the
-  ## response term does not enter because psi does not move with theta. This
-  ## is the same augmentation the transformed-additive fit uses, and for a
-  ## margin whose support does not depend on its parameters -- every family
-  ## in the registry -- it is all that Fisher's identity needs.
-  ##
-  ## Holding a fixed percentile u = F(psi; theta) instead ("reference") makes
-  ## psi = Q(u; theta) move with theta, so the score carries the derivative of
-  ## the response likelihood along that path. That is the construction the
-  ## paper's Appendix A gives for margins with parameter-dependent support,
-  ## where it is unavoidable. Elsewhere it is only a cost: the response
-  ## derivative at a posterior draw is of the order of the individual
-  ## response information, which dwarfs the population information, so the
-  ## stochastic score is an order of magnitude noisier and the recursion
-  ## wanders along any weakly identified direction. Measured on an identical
-  ## lognormal model fitted both ways, the reference route left the averaged
-  ## score forty times larger and the typical clearance five per cent off.
-  if (identical(.cop$populationScale, "parameter") &&
-      identical(.cop$scoreNaturalRoute %||% "psi", "reference")) {
-    if (!hasDesign)
-      stop("parameter-scale score fitting requires a complete design-aware eta block")
-    predictor <- copulaLocation(design, as.numeric(beta), locationMap)
-    typical <- copulaWorkingToNatural(predictor, .cop$transform)
-    psi <- copulaWorkingToNatural(phi, .cop$transform)
-    for (j in seq_len(.cop$dEta)) {
-      margin <- .cop$margins[[j]]
-      u <- margin$cdf(psi[, j], typical[, j], margin$parameters)
-      if (any(!is.finite(u)) || any(u <= 0 | u >= 1))
-        stop("natural parameter could not be mapped to a fixed reference interior")
-      referenceUniform[, j] <- u
-    }
-  } else if (identical(.cop$populationScale, "parameter") && !hasDesign)
+  ## The parameter-scale score holds the natural parameter psi fixed, so the
+  ## population score is the ordinary complete-data score d/dtheta log p(psi;
+  ## theta): the response term does not enter because psi does not move with
+  ## theta. This is what Fisher's identity needs for every family in the
+  ## registry, whose supports do not depend on their parameters.
+  if (identical(.cop$populationScale, "parameter") && !hasDesign)
     stop("parameter-scale score fitting requires a complete design-aware eta block")
-  movingEta <- which(vapply(.cop$margins[seq_len(.cop$dEta)],
-    function(margin) inherits(margin, "saemix_copula_margin") &&
-      copulaMarginHasMovingSupport(margin), logical(1)))
-  for (j in movingEta) {
-    u <- .cop$margins[[j]]$cdf(eta[, j], .cop$margins[[j]]$parameters)
-    if (any(!is.finite(u)) || any(u <= 0 | u >= 1))
-      stop("moving-support eta could not be mapped to the fixed reference interior")
-    referenceUniform[, j] <- u
-  }
-  if (!is.null(conditioning) && any(conditioningMissing)) {
-    for (local in seq_len(ncol(conditioning))) {
-      j <- .cop$dEta + local
-      rows <- conditioningMissing[, local] &
-        copulaMarginHasMovingSupport(.cop$margins[[j]])
-      if (any(rows)) {
-        u <- .cop$margins[[j]]$cdf(conditioning[rows, local],
-          .cop$margins[[j]]$parameters)
-        if (any(!is.finite(u)) || any(u <= 0 | u >= 1))
-          stop("missing moving-support covariate left the fixed reference interior")
-        referenceUniform[rows, j] <- u
-      }
-    }
-  }
-  .cop$curReferenceUniform <- referenceUniform
   invisible(NULL)
 }
 
@@ -180,57 +123,13 @@ copulaScoreResponseBlock <- function(phi, randomIndex, transform, id, x, y,
                                      hasFixedOnly = FALSE) {
   if (isTRUE(hasFixedOnly))
     stop("score-sa requires every estimated structural parameter in the population location block")
-  evaluate <- local({
-    template <- phi
-    function(phiRandom, candidateResidual) {
-      candidatePhi <- template
-      candidatePhi[, randomIndex] <- phiRandom
-      candidatePrediction <- structuralModel(
-        transphi(candidatePhi, transform), id, x)
-      for (type in exponentialType)
-        candidatePrediction[x$ytype == type] <- log(cutoff(
-          candidatePrediction[x$ytype == type]))
-      candidateSd <- error(candidatePrediction, candidateResidual, x$ytype)
-      if (any(!is.finite(candidateSd)) || any(candidateSd <= 0))
-        return(rep(-Inf, length(candidatePrediction)))
-      -.5 * ((y - candidatePrediction) / candidateSd)^2 -
-        log(candidateSd) - .5 * log(2 * pi)
-    }
-  })
-  gradient <- local({
-    evaluateLog <- evaluate
-    observationId <- as.integer(id)
-    function(phiRandom, candidateResidual, coordinates, step) {
-      phiRandom <- as.matrix(phiRandom)
-      coordinates <- as.integer(coordinates)
-      if (!length(coordinates))
-        return(matrix(0, nrow(phiRandom), ncol(phiRandom)))
-      if (any(observationId < 1L | observationId > nrow(phiRandom)))
-        stop("response-gradient subject index is incompatible with the latent batch")
-      answer <- matrix(0, nrow(phiRandom), ncol(phiRandom))
-      for (coordinate in coordinates) {
-        plus <- minus <- phiRandom
-        plus[, coordinate] <- plus[, coordinate] + step
-        minus[, coordinate] <- minus[, coordinate] - step
-        derivative <- (evaluateLog(plus, candidateResidual) -
-          evaluateLog(minus, candidateResidual)) / (2 * step)
-        if (any(!is.finite(derivative)))
-          stop("non-finite fixed-reference response derivative")
-        summed <- rowsum(matrix(derivative, ncol = 1L), observationId,
-          reorder = FALSE)
-        answer[as.integer(rownames(summed)), coordinate] <- summed[, 1L]
-      }
-      answer
-    }
-  })
   ## Which latent row each observation belongs to. The aggregate score never
   ## needed it -- it sums over observations and divides -- but a per-subject
   ## score does, because the residual block has to be attributed back to the
   ## row whose random effects produced the prediction.
   list(y = y, f = predictions, etype = x$ytype, pres = residual,
     row = as.integer(id),
-    free = copulaScoreResidualIndices(errorModel), evaluate = evaluate,
-    gradient = gradient,
+    free = copulaScoreResidualIndices(errorModel),
     batchResidualMle = if (length(errorModel) == 1L &&
       errorModel %in% c("constant", "exponential", "proportional"))
       sqrt(residualSum / (nchains * nobs)) else NA_real_)
@@ -379,7 +278,6 @@ copulaScoreMstep <- function(kiter, final = FALSE, response = NULL,
     useAverage = isTRUE(final), response = response,
     freeze = terminal, deltaGain = deltaGain,
     categoricalUniform = .cop$curCategoricalUniform,
-    referenceUniform = .cop$curReferenceUniform,
     populationScale = .cop$populationScale,
     transform = .cop$transform,
     subject = .cop$subjectChecked)
