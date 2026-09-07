@@ -145,12 +145,6 @@ copulaGaussianRvineCor <- function(vine,
   correlation
 }
 
-copulaGaussianDvineFromCor <- function(correlation) {
-  correlation <- copulaValidateCorrelation(correlation)
-  copulaGaussianRvineFromCor(correlation,
-    rvinecopulib::dvine_structure(seq_len(nrow(correlation))))
-}
-
 copulaGaussianFremEnsurePd <- function(S, relativeFloor = 1e-10) {
   S <- (S + t(S)) / 2
   ee <- eigen(S, symmetric = TRUE)

@@ -39,7 +39,7 @@ start <- combined_fit_start(standard); state <- copulaGet(standard)
 scales <- vapply(state$margins[1:2], function(margin)
   unname(margin$parameters[["sd"]]), numeric(1))
 flat <- lapply(1:2, function(j)
-  copulaNaturalMarginTilted(0L, scales[j], NULL, "positive"))
+  copulaNaturalMarginLognormal(scales[j]))
 
 ## Any disagreement stops the fit from inside the score step, so reaching the
 ## end is the check.

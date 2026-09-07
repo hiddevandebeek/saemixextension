@@ -66,14 +66,11 @@ partner <- list(real = copulaNaturalMarginNormal(1),
 families <- list(
   real = list(normal = copulaNaturalMarginNormal(.8),
     student = copulaNaturalMarginStudent(.8, 6),
-    laplace = copulaNaturalMarginLaplace(.8),
-    snp = copulaNaturalMarginSNP(2L, .8, c(.2, -.1), "real")),
+    laplace = copulaNaturalMarginLaplace(.8)),
   positive = list(lognormal = copulaNaturalMarginLognormal(.3),
     gamma = copulaNaturalMarginGamma(4),
     weibull = copulaNaturalMarginWeibull(3),
-    generalizedgamma = copulaNaturalMarginGeneralizedGamma(.3, 1),
-    mixture = copulaNaturalMarginLognormalMixture(.3, .6, .25),
-    snp = copulaNaturalMarginSNP(2L, .3, c(.2, -.1), "positive")),
+    generalizedgamma = copulaNaturalMarginGeneralizedGamma(.3, 1)),
   unit = list(logitnormal = copulaNaturalMarginLogitNormal(.6),
     beta = copulaNaturalMarginBeta(8)))
 

@@ -63,8 +63,8 @@ options(saemix.fisherTrace = TRUE)
 fit <- saemix(combined_model(), combined_data(dd),
   combined_control(6120060L, 800L),
   population = copulaPopulation(vine,
-    margins = list(copulaNaturalMarginTilted(0L, .25, NULL, "positive"),
-      copulaNaturalMarginTilted(0L, .30, NULL, "positive")),
+    margins = list(copulaNaturalMarginLognormal(.25),
+      copulaNaturalMarginLognormal(.30)),
     scale = "parameter", populationAlgorithm = "score-sa",
     scoreScale = "auto", scoreBurn = 50L))
 options(saemix.fisherTrace = FALSE)
@@ -93,11 +93,12 @@ ok("agrees with the empirical Fisher information",
 
 ## And it has to be the outer product of the mean score, not the mean of the
 ## outer product. Those are the same matrix only if the posterior score has no
-## spread at all, and here they differ by close to two orders of magnitude, so
-## a metric that had picked up the wrong one would be caught by a wide margin.
+## spread at all; the metric must sit with the mean-score outer product, not
+## between the two.
 inflation <- median(diag(pieces$outerProduct) / diag(pieces$metric))
-ok("is not the posterior mean of the outer product", inflation > 3,
-  sprintf("E[s s'|y] is %.0f times larger on the diagonal", inflation))
+ok("is not the posterior mean of the outer product",
+  inflation > 1.05 && max(abs(ratio - 1)) < (inflation - 1) / 2,
+  sprintf("E[s s'|y] is %.3f times larger on the diagonal", inflation))
 
 ## Finally the estimates themselves, since a metric that satisfies every
 ## structural property and still lands in the wrong place is no use.

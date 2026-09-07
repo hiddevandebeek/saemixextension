@@ -150,26 +150,6 @@ copulaMarginHasMovingSupport <- function(margin) {
   identical(margin$metadata$parameter_independent_support, FALSE)
 }
 
-## Centered moving-support margins for latent eta coordinates.  Their means
-## remain zero, so they do not duplicate the saemix population location.
-copulaMarginUniformCentered <- function(sd = 1) {
-  half <- sqrt(3) * unname(sd)
-  copulaMargin("uniform-centered", c(half_width = half), 1e-6, 1e6,
-    log_density = function(x, par) {
-      h <- par[1L]; ifelse(x > -h & x < h, -log(2 * h), -Inf)
-    },
-    cdf = function(x, par) {
-      h <- par[1L]; pmin(1, pmax(0, (x + h) / (2 * h)))
-    },
-    quantile = function(u, par) par[1L] * (2 * u - 1),
-    random = function(n, par) stats::runif(n, -par[1L], par[1L]),
-    scale = function(par) par[1L] / sqrt(3), centered = TRUE,
-    set_scale = function(par, value) { par[1L] <- sqrt(3) * value; par },
-    roles = "scale", scale_is_sd = TRUE,
-    metadata = list(scale_definition = "standard deviation"),
-    support_fixed = FALSE)
-}
-
 copulaMarginCenteredGamma <- function(shape = 4, sd = 1) {
   scaleFrom <- function(par) par["sd"] / sqrt(par["shape"])
   shift <- function(par) par["shape"] * scaleFrom(par)
@@ -194,29 +174,6 @@ copulaMarginCenteredGamma <- function(shape = 4, sd = 1) {
     support_fixed = FALSE)
 }
 
-copulaMarginCovariateUniform <- function(lower, upper) {
-  if (!is.finite(lower) || !is.finite(upper) || lower >= upper)
-    stop("uniform covariate bounds must be finite and increasing")
-  copulaMargin("uniform", c(lower = unname(lower), log_width = log(upper - lower)),
-    c(-1e12, log(1e-8)), c(1e12, log(1e12)),
-    log_density = function(x, par) {
-      lo <- par["lower"]; hi <- lo + exp(par["log_width"])
-      ifelse(x > lo & x < hi, -par["log_width"], -Inf)
-    },
-    cdf = function(x, par) {
-      lo <- par["lower"]; pmin(1, pmax(0,
-        (x - lo) / exp(par["log_width"])))
-    },
-    quantile = function(u, par)
-      par["lower"] + exp(par["log_width"]) * u,
-    random = function(n, par)
-      par["lower"] + exp(par["log_width"]) * stats::runif(n),
-    scale = function(par) exp(par["log_width"]) / sqrt(12),
-    centered = FALSE, roles = c("location", "scale"), scale_is_sd = TRUE,
-    metadata = list(variable_role = "conditioning",
-      scale_definition = "standard deviation"), support_fixed = FALSE)
-}
-
 copulaMarginWithParameters <- function(margin, parameters) {
   parameters <- stats::setNames(as.numeric(parameters), names(margin$parameters))
   if (length(parameters) != length(margin$parameters) ||
@@ -226,14 +183,6 @@ copulaMarginWithParameters <- function(margin, parameters) {
   margin$parameters <- parameters
   copulaMarginValidate(margin, probe = FALSE)
   margin
-}
-
-copulaMarginWithFreeParameters <- function(margin, parameters) {
-  if (length(parameters) != sum(margin$free))
-    stop("wrong number of free marginal parameters")
-  p <- margin$parameters
-  p[margin$free] <- parameters
-  copulaMarginWithParameters(margin, p)
 }
 
 copulaMarginNormal <- function(sd = 1) {
@@ -365,56 +314,6 @@ copulaMarginBernoulli <- function(prob = .5, labels = c(0, 1), free = TRUE) {
     name = "bernoulli")
   margin$metadata$categorical_kind <- "binary"
   margin
-}
-
-## Proper nominal categorical margin with an explicitly declared latent order.
-## A scalar copula CDF cannot be permutation invariant for unordered labels;
-## requiring latent_order prevents an accidental alphabetical/numeric order
-## from silently becoming part of the dependence model.
-copulaMarginCategorical <- function(probabilities, labels,
-                                    latent_order, free = TRUE) {
-  if (missing(latent_order))
-    stop("nominal categorical margins require an explicit permutation latent_order")
-  labels <- as.character(labels); latent_order <- as.character(latent_order)
-  if (length(latent_order) != length(labels) ||
-      !setequal(latent_order, labels))
-    stop("nominal categorical margins require an explicit permutation latent_order")
-  index <- match(latent_order, labels)
-  margin <- copulaMarginOrdinal(as.numeric(probabilities)[index],
-    labels = latent_order, free = free, name = "categorical")
-  margin$metadata$categorical_kind <- "nominal-with-declared-latent-order"
-  margin$metadata$latent_order <- latent_order
-  margin
-}
-
-## Adapter for any distribution exposing compatible d/p/q functions.  The
-## caller explicitly chooses native parameters, bounds, and centring; this
-## prevents unsafe guessing from the heterogeneous stats::Distributions APIs.
-copulaMarginDistribution <- function(distr, parameters, lower, upper,
-                                     free = rep(TRUE, length(parameters)),
-                                     type = c("continuous", "discrete"),
-                                     centered = FALSE, scale = NULL,
-                                     set_scale = NULL, cdf_left = NULL,
-                                     roles = NULL, scale_is_sd = FALSE,
-                                     support_fixed = NULL) {
-  type <- match.arg(type)
-  d <- get(paste0("d", distr), mode = "function")
-  p <- get(paste0("p", distr), mode = "function")
-  q <- get(paste0("q", distr), mode = "function")
-  r <- get0(paste0("r", distr), mode = "function")
-  call_with <- function(fun, x, par, extra = list())
-    do.call(fun, c(list(x), as.list(stats::setNames(par, names(parameters))), extra))
-  copulaMargin(distr, parameters, lower, upper, free = free,
-    log_density = function(x, par) call_with(d, x, par, list(log = TRUE)),
-    cdf = function(x, par) call_with(p, x, par),
-    quantile = function(u, par) call_with(q, u, par),
-    random = if (is.null(r)) NULL else function(n, par)
-      do.call(r, c(list(n), as.list(stats::setNames(par, names(parameters))))),
-    type = type, cdf_left = cdf_left, scale = scale,
-    set_scale = set_scale,
-    centered = centered, roles = roles, scale_is_sd = scale_is_sd,
-    metadata = list(adapter = "stats-distribution"),
-    support_fixed = support_fixed)
 }
 
 ## Natural-scale continuous covariate margins.  These are deliberately not
@@ -610,145 +509,6 @@ copulaMarginScales <- function(margins) vapply(margins, function(m) {
   if (length(z) != 1L || !is.finite(z) || z <= 0) NA_real_ else z
 }, numeric(1))
 
-## Pre-index columns that are unchanged throughout an optimizer call.  The
-## values of observed conditioning covariates repeat once for every retained
-## latent particle; their integer expansion map is therefore fixed even while
-## the covariate-margin parameters change.  This stores no likelihood value,
-## only the exact unique values and row map.
-copulaMarginsCompression <- function(x, columns = seq_len(ncol(as.matrix(x)))) {
-  x <- as.matrix(x); out <- vector("list", ncol(x))
-  for (j in intersect(seq_len(ncol(x)), as.integer(columns))) {
-    values <- x[, j]
-    if (nrow(x) >= 4L && anyDuplicated(values)) {
-      uniqueValues <- unique(values)
-      if (length(uniqueValues) * 2L <= nrow(x))
-        out[[j]] <- list(values = uniqueValues,
-                         map = match(values, uniqueValues))
-    }
-  }
-  out
-}
-
-copulaMarginsEvaluate <- function(x, margins, eps = NULL,
-                                  numericalPolicy = c("exact", "clip"),
-                                  compression = NULL) {
-  numericalPolicy <- match.arg(numericalPolicy)
-  if (identical(numericalPolicy, "exact") && !is.null(eps))
-    stop("eps is only valid with numericalPolicy='clip'")
-  x <- as.matrix(x)
-  if (ncol(x) != length(margins))
-    stop("margin evaluation dimension does not match the eta matrix")
-  n <- nrow(x); d <- ncol(x)
-  u <- matrix(NA_real_, n, d); log_margin <- matrix(NA_real_, n, d)
-  discrete <- which(vapply(margins, function(m) m$type == "discrete", logical(1)))
-  u_left <- if (length(discrete)) matrix(NA_real_, n, length(discrete)) else NULL
-  for (j in seq_len(d)) {
-    m <- margins[[j]]; p <- m$parameters
-    ## Conditioning values repeat once per retained latent particle. Evaluate a
-    ## repeated column on its exact unique values and expand by integer index;
-    ## this is an algebraic compression of the same marginal likelihood terms.
-    ## The 2:1 threshold avoids paying unique()/match() overhead for latent
-    ## columns whose draws are effectively all distinct.
-    values <- x[, j]
-    cached <- if (length(compression) >= j) compression[[j]] else NULL
-    compressed <- !is.null(cached)
-    if (compressed) {
-      uniqueValues <- cached$values; map <- cached$map
-      if (length(map) != n)
-        stop("margin compression map has the wrong number of rows")
-    } else if (n >= 4L && anyDuplicated(values)) {
-      uniqueValues <- unique(values)
-      compressed <- length(uniqueValues) * 2L <= n
-      if (compressed) map <- match(values, uniqueValues)
-    }
-    if (compressed) {
-      log_margin[, j] <- m$log_density(uniqueValues, p)[map]
-      u[, j] <- m$cdf(uniqueValues, p)[map]
-    } else {
-      log_margin[, j] <- m$log_density(values, p)
-      u[, j] <- m$cdf(values, p)
-    }
-    if (j %in% discrete) {
-      jj <- match(j, discrete)
-      u_left[, jj] <- if (compressed)
-        m$cdf_left(uniqueValues, p)[map] else m$cdf_left(values, p)
-    }
-  }
-  if (any(is.na(log_margin)) || any(is.nan(log_margin)) ||
-      any(log_margin == Inf) || any(!is.finite(u)))
-    stop("marginal density/mass or CDF returned an undefined value")
-  if (any(u < 0 | u > 1)) stop("a marginal CDF returned a value outside [0,1]")
-  zero_density <- apply(log_margin == -Inf, 1L, any)
-  rawRange <- range(u)
-  continuous <- setdiff(seq_len(d), discrete)
-  clipped <- matrix(FALSE, n, d)
-  if (identical(numericalPolicy, "exact")) {
-    interiorRows <- !zero_density
-    if (length(continuous) && any((u[, continuous, drop = FALSE] <= 0 |
-                                  u[, continuous, drop = FALSE] >= 1) &
-                                 interiorRows))
-      stop(paste0("an exact continuous marginal PIT reached 0 or 1 in floating-point ",
-                  "arithmetic; the likelihood was not clipped"))
-  } else {
-    if (is.null(eps)) eps <- 1e-10
-    if (length(eps) != 1L || !is.finite(eps) || eps <= 0 || eps >= 0.5)
-      stop("eps must be in (0, 0.5) for numericalPolicy='clip'")
-    if (length(continuous)) {
-      clipped[, continuous] <- u[, continuous, drop = FALSE] <= eps |
-        u[, continuous, drop = FALSE] >= 1 - eps
-      u[, continuous] <- pmin(pmax(u[, continuous, drop = FALSE], eps), 1 - eps)
-    }
-  }
-  if (length(discrete)) {
-    if (any(!is.finite(u_left))) stop("marginal left-limit CDF returned non-finite values")
-    if (any(u_left < 0 | u_left > 1))
-      stop("a discrete marginal left-limit CDF returned a value outside [0,1]")
-    if (any(u_left > u[, discrete, drop = FALSE] + 1e-14))
-      stop("a discrete marginal left-limit CDF exceeds its CDF")
-  }
-  list(log_margin = rowSums(log_margin), u = u, u_left = u_left,
-       vine_u = if (length(discrete)) cbind(u, u_left) else u,
-       discrete = discrete, clipped = clipped, n_clipped = sum(clipped),
-       zero_density = zero_density, raw_range = rawRange,
-       evaluated_range = range(u))
-}
-
-copulaMarginsLogDensity <- function(x,margins) {
-  x<-as.matrix(x)
-  if(ncol(x)!=length(margins))stop("margin density dimension mismatch")
-  z<-vapply(seq_along(margins),function(j)
-    margins[[j]]$log_density(x[,j],margins[[j]]$parameters),numeric(nrow(x)))
-  z<-matrix(z,nrow=nrow(x),ncol=length(margins))
-  if(any(is.na(z))||any(is.nan(z))||any(z==Inf))
-    stop("marginal density/mass returned an undefined value")
-  rowSums(z)
-}
-
-copulaLogDensity <- function(u, vine, cores = 1L,
-                             numericalPolicy = c("exact", "floor"),
-                             floor = 1e-300) {
-  numericalPolicy <- match.arg(numericalPolicy)
-  density <- rvinecopulib::dvinecop(as.matrix(u), vine,
-                                    cores = as.integer(cores))
-  invalid <- !is.finite(density) | density <= 0
-  if (identical(numericalPolicy, "exact")) {
-    if (any(invalid))
-      stop(paste0("the exact vine density was non-positive or non-finite in ",
-                  "floating-point arithmetic; the likelihood was not floored"))
-    out <- log(density)
-  } else {
-    if (length(floor) != 1L || !is.finite(floor) || floor <= 0)
-      stop("floor must be finite and positive")
-    if (any(is.na(density)) || any(is.nan(density)) || any(density < 0) ||
-        any(density == Inf))
-      stop("the vine density returned an undefined value; a lower floor was not applied")
-    out <- log(pmax(density, floor))
-  }
-  attr(out, "density_floored") <- if (identical(numericalPolicy, "floor"))
-    sum(density <= floor | !is.finite(density)) else 0L
-  out
-}
-
 copulaMarginsQuantile <- function(u, margins) {
   u <- as.matrix(u)
   if (ncol(u) != length(margins)) stop("quantile input has wrong dimension")
@@ -756,4 +516,77 @@ copulaMarginsQuantile <- function(u, margins) {
   for (j in seq_along(margins))
     out[, j] <- margins[[j]]$quantile(u[, j], margins[[j]]$parameters)
   out
+}
+
+## Centered moving-support margins for latent eta coordinates.  Their means
+## remain zero, so they do not duplicate the saemix population location.
+copulaMarginUniformCentered <- function(sd = 1) {
+  half <- sqrt(3) * unname(sd)
+  copulaMargin("uniform-centered", c(half_width = half), 1e-6, 1e6,
+    log_density = function(x, par) {
+      h <- par[1L]; ifelse(x > -h & x < h, -log(2 * h), -Inf)
+    },
+    cdf = function(x, par) {
+      h <- par[1L]; pmin(1, pmax(0, (x + h) / (2 * h)))
+    },
+    quantile = function(u, par) par[1L] * (2 * u - 1),
+    random = function(n, par) stats::runif(n, -par[1L], par[1L]),
+    scale = function(par) par[1L] / sqrt(3), centered = TRUE,
+    set_scale = function(par, value) { par[1L] <- sqrt(3) * value; par },
+    roles = "scale", scale_is_sd = TRUE,
+    metadata = list(scale_definition = "standard deviation"),
+    support_fixed = FALSE)
+}
+
+copulaMarginCovariateUniform <- function(lower, upper) {
+  if (!is.finite(lower) || !is.finite(upper) || lower >= upper)
+    stop("uniform covariate bounds must be finite and increasing")
+  copulaMargin("uniform", c(lower = unname(lower), log_width = log(upper - lower)),
+    c(-1e12, log(1e-8)), c(1e12, log(1e12)),
+    log_density = function(x, par) {
+      lo <- par["lower"]; hi <- lo + exp(par["log_width"])
+      ifelse(x > lo & x < hi, -par["log_width"], -Inf)
+    },
+    cdf = function(x, par) {
+      lo <- par["lower"]; pmin(1, pmax(0,
+        (x - lo) / exp(par["log_width"])))
+    },
+    quantile = function(u, par)
+      par["lower"] + exp(par["log_width"]) * u,
+    random = function(n, par)
+      par["lower"] + exp(par["log_width"]) * stats::runif(n),
+    scale = function(par) exp(par["log_width"]) / sqrt(12),
+    centered = FALSE, roles = c("location", "scale"), scale_is_sd = TRUE,
+    metadata = list(variable_role = "conditioning",
+      scale_definition = "standard deviation"), support_fixed = FALSE)
+}
+
+## Adapter for any distribution exposing compatible d/p/q functions.  The
+## caller explicitly chooses native parameters, bounds, and centring; this
+## prevents unsafe guessing from the heterogeneous stats::Distributions APIs.
+copulaMarginDistribution <- function(distr, parameters, lower, upper,
+                                     free = rep(TRUE, length(parameters)),
+                                     type = c("continuous", "discrete"),
+                                     centered = FALSE, scale = NULL,
+                                     set_scale = NULL, cdf_left = NULL,
+                                     roles = NULL, scale_is_sd = FALSE,
+                                     support_fixed = NULL) {
+  type <- match.arg(type)
+  d <- get(paste0("d", distr), mode = "function")
+  p <- get(paste0("p", distr), mode = "function")
+  q <- get(paste0("q", distr), mode = "function")
+  r <- get0(paste0("r", distr), mode = "function")
+  call_with <- function(fun, x, par, extra = list())
+    do.call(fun, c(list(x), as.list(stats::setNames(par, names(parameters))), extra))
+  copulaMargin(distr, parameters, lower, upper, free = free,
+    log_density = function(x, par) call_with(d, x, par, list(log = TRUE)),
+    cdf = function(x, par) call_with(p, x, par),
+    quantile = function(u, par) call_with(q, u, par),
+    random = if (is.null(r)) NULL else function(n, par)
+      do.call(r, c(list(n), as.list(stats::setNames(par, names(parameters))))),
+    type = type, cdf_left = cdf_left, scale = scale,
+    set_scale = set_scale,
+    centered = centered, roles = roles, scale_is_sd = scale_is_sd,
+    metadata = list(adapter = "stats-distribution"),
+    support_fixed = support_fixed)
 }

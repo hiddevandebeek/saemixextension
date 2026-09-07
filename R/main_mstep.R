@@ -211,7 +211,5 @@ mstep<-function(kiter, Uargs, Dargs, opt, structural.model, DYF, phiM, varList, 
 		    }
 		  }
 	}
-	if(isTRUE(getOption("saemixTrace",FALSE)))
-		.saemixTracePush(kiter, betas, mydiag(varList$omega), varList$pres, gamma, suffStat$statrese)
 	return(list(varList=varList,mean.phi=mean.phi,phi=phi,betas=betas,suffStat=suffStat))
 }

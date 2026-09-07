@@ -65,9 +65,7 @@ selfConsistent(standard, "transformed-additive:",
 ## and so must a fitted flexible one, on the parameter scale
 for (spec in list(
     list(nm = "gamma margin:", m = copulaNaturalMarginGamma(3)),
-    list(nm = "SNP margin:  ",
-      m = copulaNaturalMarginSNP(2L, max(scales[2L], .1), c(.3, -.2),
-        "positive")))) {
+    list(nm = "weibull margin:", m = copulaNaturalMarginWeibull(3)))) {
   flexible <- saemix(combined_model(start$fixed, start$residual, start$omega),
     sxdata, combined_control(1401061L, 500L),
     population = combined_population(base$vine,
@@ -89,7 +87,7 @@ for (spec in list(
 }
 
 ## margin parameters must be freezable, which is what block ascent relies on
-frozen <- copulaNaturalMarginSNP(2L, .3, c(.2, .1), "positive")
+frozen <- copulaNaturalMarginGamma(3)
 frozen$free[] <- FALSE
 layout <- saemix:::copulaMarginLayout(list(frozen))
 ok("a frozen margin contributes no free parameters",

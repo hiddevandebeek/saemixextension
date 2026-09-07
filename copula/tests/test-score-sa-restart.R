@@ -3,7 +3,8 @@
 ## small box must trigger at least one expansion with a restart, and the
 ## restarted recursion must still reach the same point as an unconstrained
 ## run from the same start.
-suppressPackageStartupMessages({ library(saemix); library(rvinecopulib) })
+source("copula/tests/helper-load.R")
+suppressPackageStartupMessages(library(rvinecopulib))
 
 set.seed(906201)
 n <- 60L; times <- c(.25, 1, 4, 12)

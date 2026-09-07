@@ -1,7 +1,6 @@
 ## Runtime state for the fixed Gaussian-copula score model.
 
 .cop <- new.env(parent = emptyenv())
-.trc <- new.env(parent = emptyenv())
 
 copulaClear <- function() rm(list = ls(.cop), envir = .cop)
 
@@ -491,21 +490,6 @@ copulaOmega <- function() {
   diag(scale, .cop$dEta) %*% correlation %*% diag(scale, .cop$dEta)
 }
 
-copulaIsNestedGaussian <- function(vine, margins) {
-  copulaIsFullGaussianVine(vine, length(margins)) &&
-    all(vapply(margins, function(margin) identical(margin$name, "normal"),
-      logical(1)))
-}
-
-copulaNestedGaussianLogDensity <- function(eta, vine, margins) {
-  if (!copulaIsNestedGaussian(vine, margins)) return(NULL)
-  scale <- vapply(margins, function(margin)
-    margin$parameters[["sd"]], numeric(1))
-  correlation <- copulaGaussianRvineCor(vine, length(margins))
-  covariance <- diag(scale) %*% correlation %*% diag(scale)
-  copulaGaussianLogDensity(as.matrix(eta), covariance)
-}
-
 copulaLogPrior <- function(E, vine, sdv = NULL, cores = 1L, margins = NULL,
                            numericalPolicy = "exact", ...) {
   if (!identical(numericalPolicy, "exact"))
@@ -513,14 +497,4 @@ copulaLogPrior <- function(E, vine, sdv = NULL, cores = 1L, margins = NULL,
   if (is.null(margins)) margins <- lapply(sdv, copulaMarginNormal)
   copulaGaussianFremLogPrior(as.matrix(E), vine, margins,
     ncol(as.matrix(E)), "joint")
-}
-
-saemixTraceReset <- function() {
-  .trc$L <- list()
-  options(saemixTrace = TRUE)
-}
-saemixTraceGet <- function() .trc$L
-.saemixTracePush <- function(kiter, betas, omdiag, pres, gamma, statrese) {
-  .trc$L[[length(.trc$L) + 1L]] <- list(kiter = kiter, betas = betas,
-    omdiag = omdiag, pres = pres, gamma = gamma, statrese = statrese)
 }

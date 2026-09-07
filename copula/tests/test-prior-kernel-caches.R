@@ -41,8 +41,8 @@ pair <- function(rho) rvinecopulib::bicop_dist("gaussian", 0, rho)
 vine <- rvinecopulib::vinecop_dist(
   structure = rvinecopulib::dvine_structure(1:3),
   pair_copulas = list(list(pair(.4), pair(.3)), list(pair(.1))))
-margins <- list(copulaNaturalMarginTilted(0L, .3, NULL, "positive"),
-  copulaNaturalMarginTilted(2L, .3, c(.4, -.2), "positive"),
+margins <- list(copulaNaturalMarginLognormal(.3),
+  copulaNaturalMarginGamma(4),
   copulaFitCovariateMargin(as.numeric(conditioning), "gamma"))
 eta <- matrix(rnorm(n * dEta, 0, .2), n, dEta)
 moved <- eta; moved[, 2L] <- moved[, 2L] + .05

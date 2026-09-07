@@ -57,14 +57,6 @@ copulaFisherParameterVector <- function(state, locations, residual,
     nAngle = length(angles), residualFree = residualFree)
 }
 
-## The per-subject complete-data log density, and the parameter vector it is a
-## function of, built from a fitted object. Exposed on its own so that the
-## quantity everything else rests on can be differentiated and checked against
-## an independent implementation without running the estimator.
-copulaFisherPerSubjectLogDensity <- function(object) {
-  copulaFisherContext(object)$perSubject
-}
-
 copulaFisherContext <- function(object) {
   if (!inherits(object, "SaemixObject"))
     stop("object must be a fitted SaemixObject")
