@@ -48,6 +48,7 @@ scp $SSHO "$TAR" "$USER_@$HOST:~/$RDIR/saemix-copula.tar.gz" </dev/null 2>&1 \
 ## excluded from the tarball above, so it has to travel separately.
 scp $SSHO "$HERE"/study_*.R "$HERE"/combine_*.R "$HERE"/launch.sh \
   "$SRC/copula/experiments/combined-natural-frem-study/functions.R" \
+  "$SRC/copula/experiments/combined-natural-frem-study/functions_testfirst.R" \
   "$SRC/copula/experiments/combined-natural-frem-study/summarize.R" \
   "$USER_@$HOST:~/$RDIR/" </dev/null 2>&1 | grep -vE "Permanently added" || true
 rm -f "$TAR"
